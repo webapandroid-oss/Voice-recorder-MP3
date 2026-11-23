@@ -1,15 +1,38 @@
-name: Build & Test Android APK
+name: Build & Release Android APK
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub Release tag (leave blank to auto-generate)"
+        type: string
+        required: false
+        default: ""
+      release_name:
+        description: "GitHub Release title (leave blank to auto-generate)"
+        type: string
+        required: false
+        default: ""
+      release_mode:
+        description: "GitHub Release publish mode"
+        type: choice
+        required: true
+        default: "published"
+        options:
+          - published
+          - prerelease
+          - draft
+      run_tests:
+        description: "Run Unit & Robolectric tests before building"
+        type: choice
+        required: true
+        default: "enable"
+        options:
+          - enable
+          - disable
+
+permissions:
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,7 +40,7 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Test & Build APK
+    name: Test, Build & Release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -35,8 +58,10 @@ jobs:
 
       - name: Ensure Android SDK Platform 36.1 & Build-Tools 36.0.0
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-36.1" "build-tools;36.0.0" >/dev/null
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          set -o pipefail
+          sdkmanager --install "platforms;android-36.1" "build-tools;36.0.0"
 
       - name: Check prebuilt libffmpeg.so binaries
         id: check-ffmpeg
@@ -64,7 +89,11 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
           WORK_DIR: /tmp/native_build
         run: |
-          yes | sdkmanager --install "ndk;28.2.13676358" >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils make file pkg-config
+          if [ ! -d "${ANDROID_HOME}/ndk/28.2.13676358" ]; then
+            sdkmanager --install "ndk;28.2.13676358"
+          fi
           chmod +x app/src/main/cpp/build_libffmpeg.sh
           bash app/src/main/cpp/build_libffmpeg.sh
 
@@ -81,6 +110,7 @@ jobs:
           fi
 
       - name: Run Unit & Robolectric Tests
+        if: ${{ inputs.run_tests == 'enable' }}
         run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
 
       - name: Build Debug APK
@@ -96,28 +126,35 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$KEYSTORE_PATH"
           gradle :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: voice-recorder-mp3-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 30
+      - name: Prepare Release APKs & Metadata
+        id: release-meta
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+        run: |
+          mkdir -p release_apks
+          cp app/build/outputs/apk/debug/*.apk release_apks/
+          if compgen -G "app/build/outputs/apk/release/*.apk" > /dev/null; then
+            cp app/build/outputs/apk/release/*.apk release_apks/
+          fi
+          ls -lh release_apks/
 
-      - name: Upload Release APK (if built)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.STORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: voice-recorder-mp3-release-apk
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: ignore
-          retention-days: 30
+          VERSION_NAME="$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+          VERSION_NAME="${VERSION_NAME:-1.0}"
+          TAG="${INPUT_RELEASE_TAG:-v${VERSION_NAME}-build.${{ github.run_number }}}"
+          NAME="${INPUT_RELEASE_NAME:-Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})}"
 
-      - name: Upload Unit Test Reports
-        if: always()
-        uses: actions/upload-artifact@v4
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release_name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK to GitHub Release
+        uses: softprops/action-gh-release@v3
         with:
-          name: unit-test-reports
-          path: app/build/reports/tests/testDebugUnitTest/
-          if-no-files-found: ignore
-          retention-days: 14
+          tag_name: ${{ steps.release-meta.outputs.tag_name }}
+          name: ${{ steps.release-meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          files: release_apks/*.apk
+          fail_on_unmatched_files: true
+          draft: ${{ inputs.release_mode == 'draft' }}
+          prerelease: ${{ inputs.release_mode == 'prerelease' }}
+          generate_release_notes: true

@@ -22,29 +22,98 @@ if [ -z "${ANDROID_NDK_HOME:-}" ]; then
 fi
 NDK="${ANDROID_NDK_HOME:?ANDROID_NDK_HOME is not set and no NDK was found in SDK}"
 TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
-MAKE_BIN="$NDK/prebuilt/linux-x86_64/bin/make"
-API="${ANDROID_API_LEVEL:-24}"
+if [ ! -d "$TOOLCHAIN" ]; then
+    echo "Error: NDK LLVM toolchain not found at $TOOLCHAIN" >&2
+    exit 1
+fi
 
+# NDK r27/r28+ may omit prebuilt make; fall back cleanly to system make
+if [ -x "$NDK/prebuilt/linux-x86_64/bin/make" ]; then
+    MAKE_BIN="$NDK/prebuilt/linux-x86_64/bin/make"
+elif command -v make >/dev/null 2>&1; then
+    MAKE_BIN="$(command -v make)"
+else
+    echo "Error: GNU make not found in NDK or PATH" >&2
+    exit 1
+fi
+
+API="${ANDROID_API_LEVEL:-24}"
 export PATH="$TOOLCHAIN/bin:$NDK/prebuilt/linux-x86_64/bin:$PATH"
 JOBS="$(nproc 2>/dev/null || echo 4)"
 TARGET_ABIS="${TARGET_ABIS:-arm64-v8a armeabi-v7a x86_64 x86}"
 
 mkdir -p "$WORK_DIR" "$DOWNLOAD_DIR"
 
-if [ ! -d "$LAME_SRC" ]; then
-    if [ ! -f "$LAME_TAR" ]; then
-        echo "Downloading lame-3.100..."
-        curl -fsSL -L -o "$LAME_TAR" "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz"
+verify_archive() {
+    local file="$1"
+    local type="$2"
+    [ -s "$file" ] || return 1
+    case "$type" in
+        gz)
+            gzip -t "$file" >/dev/null 2>&1
+            ;;
+        xz)
+            if command -v xz >/dev/null 2>&1; then
+                xz -t "$file" >/dev/null 2>&1
+            else
+                python3 -c "import tarfile; tarfile.open('$file', 'r:xz').close()" >/dev/null 2>&1
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+download_with_mirrors() {
+    local dest="$1"
+    local type="$2"
+    shift 2
+
+    if verify_archive "$dest" "$type"; then
+        return 0
     fi
+    rm -f "$dest"
+
+    local tmp="${dest}.tmp"
+    for url in "$@"; do
+        echo "Downloading $(basename "$dest") from $url..."
+        rm -f "$tmp"
+        if curl -fsSL -L -A "Mozilla/5.0" --retry 3 --retry-delay 2 -o "$tmp" "$url"; then
+            if verify_archive "$tmp" "$type"; then
+                mv "$tmp" "$dest"
+                return 0
+            fi
+            echo "Warning: Downloaded file from $url failed integrity check, trying next mirror..." >&2
+        else
+            echo "Warning: Failed to download from $url, trying next mirror..." >&2
+        fi
+    done
+
+    rm -f "$tmp"
+    echo "Error: Could not download valid archive for $(basename "$dest")" >&2
+    return 1
+}
+
+if [ ! -d "$LAME_SRC" ]; then
+    download_with_mirrors "$LAME_TAR" "gz" \
+        "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz" \
+        "https://sourceforge.net/projects/lame/files/lame/3.100/lame-3.100.tar.gz/download" \
+        "https://deb.debian.org/debian/pool/main/l/lame/lame_3.100.orig.tar.gz" \
+        "https://ftp.osuosl.org/pub/blfs/conglomeration/lame/lame-3.100.tar.gz"
     tar -xzf "$LAME_TAR" -C "$WORK_DIR"
 fi
 
 if [ ! -d "$FFMPEG_SRC" ]; then
-    if [ ! -f "$FFMPEG_TAR" ]; then
-        echo "Downloading ffmpeg-6.1.2..."
-        curl -fsSL -L -o "$FFMPEG_TAR" "https://ffmpeg.org/releases/ffmpeg-6.1.2.tar.xz"
+    download_with_mirrors "$FFMPEG_TAR" "xz" \
+        "https://ffmpeg.org/releases/ffmpeg-6.1.2.tar.xz" \
+        "https://www.ffmpeg.org/releases/ffmpeg-6.1.2.tar.xz" \
+        "https://fossies.org/linux/misc/ffmpeg-6.1.2.tar.xz"
+    if command -v xz >/dev/null 2>&1; then
+        tar -xJf "$FFMPEG_TAR" -C "$WORK_DIR"
+    else
+        python3 -c "import tarfile; tarfile.open('$FFMPEG_TAR', 'r:xz').extractall('$WORK_DIR')"
     fi
-    python3 -c "import tarfile; tarfile.open('$FFMPEG_TAR', 'r:xz').extractall('$WORK_DIR')"
 fi
 
 build_abi() {
@@ -74,40 +143,48 @@ build_abi() {
     local RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
     local NM="$TOOLCHAIN/bin/llvm-nm"
     local STRIP="$TOOLCHAIN/bin/llvm-strip"
+    local COMPAT_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion"
 
     # 1. Build libmp3lame.a
     pushd "$LAME_BUILD" >/dev/null
-    CC="$CC" \
-    AR="$AR" \
-    RANLIB="$RANLIB" \
-    NM="$NM" \
-    STRIP="$STRIP" \
-    CFLAGS="-O2 -fPIC $EXTRA_CFLAGS" \
-    ac_cv_func_malloc_0_nonnull=yes \
-    ac_cv_func_realloc_0_nonnull=yes \
-    ac_cv_header_xmmintrin_h=no \
-    "$LAME_SRC/configure" \
-        --host="$TARGET_HOST" \
-        --prefix="$PREFIX" \
-        --enable-static \
-        --disable-shared \
-        --disable-frontend \
-        --disable-decoder \
-        --with-pic \
-        --quiet
+    if ! CC="$CC" \
+        CXX="$CXX" \
+        AR="$AR" \
+        RANLIB="$RANLIB" \
+        NM="$NM" \
+        STRIP="$STRIP" \
+        CFLAGS="-O2 -fPIC $COMPAT_CFLAGS $EXTRA_CFLAGS" \
+        ac_cv_func_malloc_0_nonnull=yes \
+        ac_cv_func_realloc_0_nonnull=yes \
+        ac_cv_header_xmmintrin_h=no \
+        "$LAME_SRC/configure" \
+            --host="$TARGET_HOST" \
+            --prefix="$PREFIX" \
+            --enable-static \
+            --disable-shared \
+            --disable-frontend \
+            --disable-decoder \
+            --with-pic \
+            --quiet; then
+        echo "LAME configure failed for $ABI; tail of config.log:" >&2
+        tail -n 80 "$LAME_BUILD/config.log" >&2 || true
+        exit 1
+    fi
 
     "$MAKE_BIN" -j"$JOBS" install >/dev/null
     popd >/dev/null
 
     # 2. Build minimal MP3-only FFmpeg static libraries
     pushd "$FFMPEG_BUILD" >/dev/null
-    "$FFMPEG_SRC/configure" \
+    if ! "$FFMPEG_SRC/configure" \
         --prefix="$PREFIX" \
         --target-os=android \
         --arch="$FFMPEG_ARCH" \
         --cpu="$FFMPEG_CPU" \
         --cc="$CC" \
         --cxx="$CXX" \
+        --as="$CC" \
+        --ld="$CC" \
         --ar="$AR" \
         --ranlib="$RANLIB" \
         --nm="$NM" \
@@ -137,9 +214,13 @@ build_abi() {
         --enable-demuxer=mp3,wav,pcm_s16le \
         --enable-parser=mpegaudio \
         --enable-protocol=file,pipe \
-        --extra-cflags="-O2 -fPIC -I$PREFIX/include $EXTRA_CFLAGS" \
+        --extra-cflags="-O2 -fPIC $COMPAT_CFLAGS -I$PREFIX/include $EXTRA_CFLAGS" \
         --extra-ldflags="-L$PREFIX/lib" \
-        $FFMPEG_EXTRA_CFG
+        $FFMPEG_EXTRA_CFG; then
+        echo "FFmpeg configure failed for $ABI; tail of ffbuild/config.log:" >&2
+        tail -n 100 "$FFMPEG_BUILD/ffbuild/config.log" >&2 || true
+        exit 1
+    fi
 
     "$MAKE_BIN" -j"$JOBS" install >/dev/null
     popd >/dev/null
@@ -158,6 +239,7 @@ build_abi() {
         -Wl,--end-group \
         -lm -lz -llog \
         -Wl,-soname,libffmpeg.so \
+        -Wl,-Bsymbolic \
         -Wl,-z,max-page-size=16384 \
         -Wl,--gc-sections \
         -o "$OUT_DIR/libffmpeg.so"

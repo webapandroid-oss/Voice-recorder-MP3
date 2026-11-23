@@ -3,39 +3,80 @@ name: Build MP3-Only FFmpeg (libffmpeg.so)
 on:
   workflow_dispatch:
     inputs:
+      target_abi:
+        description: "Target ABI(s) to build"
+        type: choice
+        required: true
+        default: "all"
+        options:
+          - all
+          - arm64-v8a
+          - armeabi-v7a
+          - x86_64
+          - x86
+          - 64-bit
+          - 32-bit
       verify_symbols:
-        description: "Verify exported JNI symbols and ELF headers"
-        type: boolean
-        default: true
-  push:
-    paths:
-      - "app/src/main/cpp/**"
-      - ".github/workflows/build-ffmpeg.yml"
-  pull_request:
-    paths:
-      - "app/src/main/cpp/**"
-      - ".github/workflows/build-ffmpeg.yml"
+        description: "Check JNI symbols & ELF headers"
+        type: choice
+        required: true
+        default: "enable"
+        options:
+          - enable
+          - disable
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    name: Resolve ABI Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Compute target ABI matrix
+        id: set-matrix
+        env:
+          TARGET_ABI: ${{ inputs.target_abi }}
+        run: |
+          case "$TARGET_ABI" in
+            all)
+              MATRIX='{"include":[{"abi":"arm64-v8a","arch_bits":"64-bit"},{"abi":"armeabi-v7a","arch_bits":"32-bit"},{"abi":"x86_64","arch_bits":"64-bit"},{"abi":"x86","arch_bits":"32-bit"}]}'
+              ;;
+            64-bit)
+              MATRIX='{"include":[{"abi":"arm64-v8a","arch_bits":"64-bit"},{"abi":"x86_64","arch_bits":"64-bit"}]}'
+              ;;
+            32-bit)
+              MATRIX='{"include":[{"abi":"armeabi-v7a","arch_bits":"32-bit"},{"abi":"x86","arch_bits":"32-bit"}]}'
+              ;;
+            arm64-v8a)
+              MATRIX='{"include":[{"abi":"arm64-v8a","arch_bits":"64-bit"}]}'
+              ;;
+            armeabi-v7a)
+              MATRIX='{"include":[{"abi":"armeabi-v7a","arch_bits":"32-bit"}]}'
+              ;;
+            x86_64)
+              MATRIX='{"include":[{"abi":"x86_64","arch_bits":"64-bit"}]}'
+              ;;
+            x86)
+              MATRIX='{"include":[{"abi":"x86","arch_bits":"32-bit"}]}'
+              ;;
+            *)
+              echo "Unsupported target_abi: $TARGET_ABI" >&2
+              exit 1
+              ;;
+          esac
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
   build-libffmpeg:
     name: Build libffmpeg.so (${{ matrix.abi }})
+    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - abi: arm64-v8a
-            arch_bits: "64-bit"
-          - abi: armeabi-v7a
-            arch_bits: "32-bit"
-          - abi: x86_64
-            arch_bits: "64-bit"
-          - abi: x86
-            arch_bits: "32-bit"
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
 
     steps:
       - name: Checkout source
@@ -44,7 +85,7 @@ jobs:
       - name: Install host build prerequisites
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils
+          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils make file pkg-config
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -58,13 +99,19 @@ jobs:
 
       - name: Install Android NDK 28.2.13676358
         if: steps.cache-ndk.outputs.cache-hit != 'true'
-        run: yes | sdkmanager --install "ndk;28.2.13676358" >/dev/null
+        run: |
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          set -o pipefail
+          if [ ! -d "${ANDROID_HOME}/ndk/28.2.13676358" ]; then
+            sdkmanager --install "ndk;28.2.13676358"
+          fi
 
       - name: Cache FFmpeg & LAME source tarballs
         uses: actions/cache@v4
         with:
           path: /tmp/native_build/downloads
-          key: ffmpeg-6.1.2-lame-3.100-sources-v1
+          key: ffmpeg-6.1.2-lame-3.100-sources-v2
 
       - name: Build MP3-only libffmpeg.so (${{ matrix.abi }} / ${{ matrix.arch_bits }})
         env:
@@ -76,7 +123,7 @@ jobs:
           bash app/src/main/cpp/build_libffmpeg.sh
 
       - name: Verify ELF binary & JNI symbols
-        if: ${{ inputs.verify_symbols != false }}
+        if: ${{ inputs.verify_symbols == 'enable' }}
         run: |
           SO_PATH="app/src/main/jniLibs/${{ matrix.abi }}/libffmpeg.so"
           test -f "$SO_PATH"
@@ -84,50 +131,38 @@ jobs:
           readelf -d "$SO_PATH" | grep -E "SONAME|NEEDED"
           "${ANDROID_HOME}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$SO_PATH" | grep "Java_com_android_abdullah_voicerecorder_mp3_audio_FfmpegMp3Native"
 
+      - name: Stage libffmpeg.so with ABI folder
+        run: |
+          mkdir -p "artifact_out/${{ matrix.abi }}"
+          cp "app/src/main/jniLibs/${{ matrix.abi }}/libffmpeg.so" "artifact_out/${{ matrix.abi }}/libffmpeg.so"
+
       - name: Upload libffmpeg.so (${{ matrix.abi }})
         uses: actions/upload-artifact@v4
         with:
           name: libffmpeg-${{ matrix.abi }}
-          path: app/src/main/jniLibs/${{ matrix.abi }}/libffmpeg.so
+          path: artifact_out
           if-no-files-found: error
           retention-days: 30
 
   package-libffmpeg:
-    name: Bundle 64-bit & 32-bit libffmpeg.so
+    name: Bundle selected libffmpeg.so binaries
     needs: build-libffmpeg
     runs-on: ubuntu-latest
     steps:
-      - name: Download arm64-v8a
+      - name: Download built libffmpeg.so binaries
         uses: actions/download-artifact@v4
         with:
-          name: libffmpeg-arm64-v8a
-          path: jniLibs/arm64-v8a
+          pattern: libffmpeg-*
+          path: jniLibs
+          merge-multiple: true
 
-      - name: Download armeabi-v7a
-        uses: actions/download-artifact@v4
-        with:
-          name: libffmpeg-armeabi-v7a
-          path: jniLibs/armeabi-v7a
-
-      - name: Download x86_64
-        uses: actions/download-artifact@v4
-        with:
-          name: libffmpeg-x86_64
-          path: jniLibs/x86_64
-
-      - name: Download x86
-        uses: actions/download-artifact@v4
-        with:
-          name: libffmpeg-x86
-          path: jniLibs/x86
-
-      - name: Verify all 4 ABI binaries
+      - name: Verify bundled ABI binaries
         run: ls -lh jniLibs/*/libffmpeg.so
 
-      - name: Upload combined libffmpeg-all-abis bundle
+      - name: Upload combined libffmpeg bundle
         uses: actions/upload-artifact@v4
         with:
-          name: libffmpeg-all-abis
+          name: libffmpeg-bundle-${{ inputs.target_abi }}
           path: jniLibs/**/libffmpeg.so
           if-no-files-found: error
           retention-days: 30

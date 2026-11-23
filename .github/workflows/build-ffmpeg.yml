@@ -1,0 +1,133 @@
+name: Build MP3-Only FFmpeg (libffmpeg.so)
+
+on:
+  workflow_dispatch:
+    inputs:
+      verify_symbols:
+        description: "Verify exported JNI symbols and ELF headers"
+        type: boolean
+        default: true
+  push:
+    paths:
+      - "app/src/main/cpp/**"
+      - ".github/workflows/build-ffmpeg.yml"
+  pull_request:
+    paths:
+      - "app/src/main/cpp/**"
+      - ".github/workflows/build-ffmpeg.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-libffmpeg:
+    name: Build libffmpeg.so (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            arch_bits: "64-bit"
+          - abi: armeabi-v7a
+            arch_bits: "32-bit"
+          - abi: x86_64
+            arch_bits: "64-bit"
+          - abi: x86
+            arch_bits: "32-bit"
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install host build prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Android NDK r28c
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          key: android-ndk-28.2.13676358-linux
+
+      - name: Install Android NDK 28.2.13676358
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: yes | sdkmanager --install "ndk;28.2.13676358" >/dev/null
+
+      - name: Cache FFmpeg & LAME source tarballs
+        uses: actions/cache@v4
+        with:
+          path: /tmp/native_build/downloads
+          key: ffmpeg-6.1.2-lame-3.100-sources-v1
+
+      - name: Build MP3-only libffmpeg.so (${{ matrix.abi }} / ${{ matrix.arch_bits }})
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          WORK_DIR: /tmp/native_build
+          TARGET_ABIS: ${{ matrix.abi }}
+        run: |
+          chmod +x app/src/main/cpp/build_libffmpeg.sh
+          bash app/src/main/cpp/build_libffmpeg.sh
+
+      - name: Verify ELF binary & JNI symbols
+        if: ${{ inputs.verify_symbols != false }}
+        run: |
+          SO_PATH="app/src/main/jniLibs/${{ matrix.abi }}/libffmpeg.so"
+          test -f "$SO_PATH"
+          file "$SO_PATH"
+          readelf -d "$SO_PATH" | grep -E "SONAME|NEEDED"
+          "${ANDROID_HOME}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$SO_PATH" | grep "Java_com_android_abdullah_voicerecorder_mp3_audio_FfmpegMp3Native"
+
+      - name: Upload libffmpeg.so (${{ matrix.abi }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: libffmpeg-${{ matrix.abi }}
+          path: app/src/main/jniLibs/${{ matrix.abi }}/libffmpeg.so
+          if-no-files-found: error
+          retention-days: 30
+
+  package-libffmpeg:
+    name: Bundle 64-bit & 32-bit libffmpeg.so
+    needs: build-libffmpeg
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download arm64-v8a
+        uses: actions/download-artifact@v4
+        with:
+          name: libffmpeg-arm64-v8a
+          path: jniLibs/arm64-v8a
+
+      - name: Download armeabi-v7a
+        uses: actions/download-artifact@v4
+        with:
+          name: libffmpeg-armeabi-v7a
+          path: jniLibs/armeabi-v7a
+
+      - name: Download x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: libffmpeg-x86_64
+          path: jniLibs/x86_64
+
+      - name: Download x86
+        uses: actions/download-artifact@v4
+        with:
+          name: libffmpeg-x86
+          path: jniLibs/x86
+
+      - name: Verify all 4 ABI binaries
+        run: ls -lh jniLibs/*/libffmpeg.so
+
+      - name: Upload combined libffmpeg-all-abis bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: libffmpeg-all-abis
+          path: jniLibs/**/libffmpeg.so
+          if-no-files-found: error
+          retention-days: 30

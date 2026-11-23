@@ -1,0 +1,123 @@
+name: Build & Test Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Test & Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Ensure Android SDK Platform 36.1 & Build-Tools 36.0.0
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platforms;android-36.1" "build-tools;36.0.0" >/dev/null
+
+      - name: Check prebuilt libffmpeg.so binaries
+        id: check-ffmpeg
+        run: |
+          if [ -f "app/src/main/jniLibs/arm64-v8a/libffmpeg.so" ] && \
+             [ -f "app/src/main/jniLibs/armeabi-v7a/libffmpeg.so" ] && \
+             [ -f "app/src/main/jniLibs/x86_64/libffmpeg.so" ] && \
+             [ -f "app/src/main/jniLibs/x86/libffmpeg.so" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache compiled libffmpeg.so (when not committed)
+        if: steps.check-ffmpeg.outputs.present != 'true'
+        id: cache-ffmpeg-libs
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/jniLibs
+          key: libffmpeg-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/**') }}
+
+      - name: Build libffmpeg.so on cache miss
+        if: steps.check-ffmpeg.outputs.present != 'true' && steps.cache-ffmpeg-libs.outputs.cache-hit != 'true'
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          WORK_DIR: /tmp/native_build
+        run: |
+          yes | sdkmanager --install "ndk;28.2.13676358" >/dev/null
+          chmod +x app/src/main/cpp/build_libffmpeg.sh
+          bash app/src/main/cpp/build_libffmpeg.sh
+
+      - name: Setup Gradle 9.3.1 with Build & Dependency Caching
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+          cache-read-only: false
+
+      - name: Restore debug.keystore from base64
+        run: |
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+
+      - name: Run Unit & Robolectric Tests
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Build Debug APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Build Signed Release APK (when release signing secrets exist)
+        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.STORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$KEYSTORE_PATH"
+          gradle :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-recorder-mp3-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Release APK (if built)
+        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.STORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-recorder-mp3-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload Unit Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 14

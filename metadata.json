@@ -1,0 +1,6 @@
+{
+  "name": "Voice Recorder",
+  "description": "Dedicated MP3 voice recorder with live waveform metering, configurable MP3 bitrates, background recording, and built-in playback.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -85,10 +85,16 @@ jobs:
       - name: Install host build prerequisites
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils make file pkg-config
+          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils make file pkg-config autotools-dev
+
+      - name: Setup JDK 17 (required by sdkmanager)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Cache Android NDK r28c
         id: cache-ndk
@@ -100,12 +106,13 @@ jobs:
       - name: Install Android NDK 28.2.13676358
         if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           set +o pipefail
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          set -o pipefail
-          if [ ! -d "${ANDROID_HOME}/ndk/28.2.13676358" ]; then
-            sdkmanager --install "ndk;28.2.13676358"
+          yes | sdkmanager --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
+          if [ ! -d "${SDK_ROOT}/ndk/28.2.13676358" ]; then
+            yes | sdkmanager --sdk_root="$SDK_ROOT" --install "ndk;28.2.13676358"
           fi
+          set -o pipefail
 
       - name: Cache FFmpeg & LAME source tarballs
         uses: actions/cache@v4
@@ -125,11 +132,12 @@ jobs:
       - name: Verify ELF binary & JNI symbols
         if: ${{ inputs.verify_symbols == 'enable' }}
         run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           SO_PATH="app/src/main/jniLibs/${{ matrix.abi }}/libffmpeg.so"
           test -f "$SO_PATH"
           file "$SO_PATH"
           readelf -d "$SO_PATH" | grep -E "SONAME|NEEDED"
-          "${ANDROID_HOME}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$SO_PATH" | grep "Java_com_android_abdullah_voicerecorder_mp3_audio_FfmpegMp3Native"
+          "${SDK_ROOT}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D "$SO_PATH" | grep "Java_com_android_abdullah_voicerecorder_mp3_audio_FfmpegMp3Native"
 
       - name: Stage libffmpeg.so with ABI folder
         run: |

@@ -54,14 +54,16 @@ jobs:
           java-version: "17"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
-      - name: Ensure Android SDK Platform 36.1 & Build-Tools 36.0.0
+      - name: Ensure Android SDK Platform 36 & Build-Tools 36.0.0
         run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           set +o pipefail
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          yes | sdkmanager --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
+          yes | sdkmanager --sdk_root="$SDK_ROOT" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          yes | sdkmanager --sdk_root="$SDK_ROOT" --install "platforms;android-36.1" >/dev/null 2>&1 || true
           set -o pipefail
-          sdkmanager --install "platforms;android-36.1" "build-tools;36.0.0"
 
       - name: Check prebuilt libffmpeg.so binaries
         id: check-ffmpeg
@@ -90,9 +92,12 @@ jobs:
           WORK_DIR: /tmp/native_build
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils make file pkg-config
-          if [ ! -d "${ANDROID_HOME}/ndk/28.2.13676358" ]; then
-            sdkmanager --install "ndk;28.2.13676358"
+          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils make file pkg-config autotools-dev
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ ! -d "${SDK_ROOT}/ndk/28.2.13676358" ]; then
+            set +o pipefail
+            yes | sdkmanager --sdk_root="$SDK_ROOT" --install "ndk;28.2.13676358"
+            set -o pipefail
           fi
           chmod +x app/src/main/cpp/build_libffmpeg.sh
           bash app/src/main/cpp/build_libffmpeg.sh
@@ -119,11 +124,12 @@ jobs:
       - name: Build Signed Release APK (when release signing secrets exist)
         if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.STORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
         env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$KEYSTORE_PATH"
+          printf '%s' "$KEYSTORE_BASE64" | tr -d ' \t\r\n' | base64 -d > "$KEYSTORE_PATH"
           gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Prepare Release APKs & Metadata

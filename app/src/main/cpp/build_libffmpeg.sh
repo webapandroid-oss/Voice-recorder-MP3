@@ -14,7 +14,7 @@ LAME_SRC="$WORK_DIR/lame-3.100"
 FFMPEG_SRC="$WORK_DIR/ffmpeg-6.1.2"
 
 # Auto-detect Android NDK if ANDROID_NDK_HOME is not explicitly provided
-if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+if [ -z "${ANDROID_NDK_HOME:-}" ] || [ ! -d "${ANDROID_NDK_HOME:-}" ]; then
     SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/opt/android/sdk}}"
     if [ -d "$SDK_ROOT/ndk" ]; then
         ANDROID_NDK_HOME="$(ls -1d "$SDK_ROOT/ndk/"* 2>/dev/null | sort -V | tail -n 1)"
@@ -95,6 +95,36 @@ download_with_mirrors() {
     return 1
 }
 
+update_gnu_config_scripts() {
+    local target_dir="$1"
+    local updated_sub=""
+    local updated_guess=""
+
+    for candidate in /usr/share/misc/config.sub /usr/share/automake-*/config.sub; do
+        if [ -f "$candidate" ]; then
+            updated_sub="$candidate"
+            break
+        fi
+    done
+    for candidate in /usr/share/misc/config.guess /usr/share/automake-*/config.guess; do
+        if [ -f "$candidate" ]; then
+            updated_guess="$candidate"
+            break
+        fi
+    done
+
+    if [ -n "$updated_sub" ] && [ -n "$updated_guess" ]; then
+        cp -f "$updated_sub" "$target_dir/config.sub"
+        cp -f "$updated_guess" "$target_dir/config.guess"
+        chmod +x "$target_dir/config.sub" "$target_dir/config.guess"
+    else
+        echo "Downloading updated GNU config.sub & config.guess for Android target triples..."
+        curl -fsSL -L --retry 3 -o "$target_dir/config.sub" "https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.sub;hb=HEAD"
+        curl -fsSL -L --retry 3 -o "$target_dir/config.guess" "https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.guess;hb=HEAD"
+        chmod +x "$target_dir/config.sub" "$target_dir/config.guess"
+    fi
+}
+
 if [ ! -d "$LAME_SRC" ]; then
     download_with_mirrors "$LAME_TAR" "gz" \
         "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz" \
@@ -103,6 +133,9 @@ if [ ! -d "$LAME_SRC" ]; then
         "https://ftp.osuosl.org/pub/blfs/conglomeration/lame/lame-3.100.tar.gz"
     tar -xzf "$LAME_TAR" -C "$WORK_DIR"
 fi
+
+# LAME 3.100 ships an older config.sub that does not recognize aarch64-linux-android
+update_gnu_config_scripts "$LAME_SRC"
 
 if [ ! -d "$FFMPEG_SRC" ]; then
     download_with_mirrors "$FFMPEG_TAR" "xz" \
@@ -145,6 +178,11 @@ build_abi() {
     local STRIP="$TOOLCHAIN/bin/llvm-strip"
     local COMPAT_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion"
 
+    if [ ! -x "$CC" ]; then
+        echo "Error: Clang wrapper not found at $CC" >&2
+        exit 1
+    fi
+
     # 1. Build libmp3lame.a
     pushd "$LAME_BUILD" >/dev/null
     if ! CC="$CC" \
@@ -153,7 +191,7 @@ build_abi() {
         RANLIB="$RANLIB" \
         NM="$NM" \
         STRIP="$STRIP" \
-        CFLAGS="-O2 -fPIC $COMPAT_CFLAGS $EXTRA_CFLAGS" \
+        CFLAGS="-O2 -fPIC -DSTDC_HEADERS $COMPAT_CFLAGS $EXTRA_CFLAGS" \
         ac_cv_func_malloc_0_nonnull=yes \
         ac_cv_func_realloc_0_nonnull=yes \
         ac_cv_header_xmmintrin_h=no \
@@ -171,7 +209,11 @@ build_abi() {
         exit 1
     fi
 
-    "$MAKE_BIN" -j"$JOBS" install >/dev/null
+    if ! "$MAKE_BIN" -j"$JOBS" install >"$LAME_BUILD/build.log" 2>&1; then
+        echo "LAME make failed for $ABI; tail of build.log:" >&2
+        tail -n 100 "$LAME_BUILD/build.log" >&2 || true
+        exit 1
+    fi
     popd >/dev/null
 
     # 2. Build minimal MP3-only FFmpeg static libraries
@@ -222,7 +264,11 @@ build_abi() {
         exit 1
     fi
 
-    "$MAKE_BIN" -j"$JOBS" install >/dev/null
+    if ! "$MAKE_BIN" -j"$JOBS" install >"$FFMPEG_BUILD/build.log" 2>&1; then
+        echo "FFmpeg make failed for $ABI; tail of build.log:" >&2
+        tail -n 120 "$FFMPEG_BUILD/build.log" >&2 || true
+        exit 1
+    fi
     popd >/dev/null
 
     # 3. Link JNI bridge + FFmpeg static archives + libmp3lame.a into single libffmpeg.so

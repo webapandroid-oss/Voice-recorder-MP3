@@ -425,7 +425,8 @@ jobs:
             --ref "$DISPATCH_REF" \
             --zips-dir build/ffmpeg_zips \
             --extract-dir build/ffmpeg_extracted \
-            --lib-out-dir build/apk_stage/lib
+            --lib-out-dir build/apk_stage/lib \
+            --local-jni-dir app/src/main/jniLibs
           ls -lh build/apk_stage/lib/*/libffmpeg.so
 
       - name: Pack Native Libraries (lib/) & Multidex (.dex) into AAPT2 APK
@@ -433,17 +434,19 @@ jobs:
           SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           ZIPALIGN="${SDK_ROOT}/build-tools/36.0.0/zipalign"
 
-          if [ -d build/aapt2_in/aar_jni ]; then
+          mkdir -p build/apk_stage/lib
+          if [ -d build/aapt2_in/aar_jni ] && [ -n "$(ls -A build/aapt2_in/aar_jni 2>/dev/null)" ]; then
             cp -rn build/aapt2_in/aar_jni/* build/apk_stage/lib/ || true
           fi
 
           find build/dex_in -name "classes*.dex" -exec cp {} build/apk_stage/ \;
+          ls -lh build/apk_stage/classes*.dex
           cp build/aapt2_in/base-resources.apk build/unaligned.apk
 
           (
             cd build/apk_stage
             zip -q -0 -r ../unaligned.apk lib
-            zip -q -u ../unaligned.apk classes*.dex
+            zip -q ../unaligned.apk classes*.dex
           )
 
           "$ZIPALIGN" -P 16 -f 4 build/unaligned.apk build/aligned.apk
@@ -501,14 +504,30 @@ jobs:
           NAME="${CLEAN_NAME:-Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})}"
           APK_FILE="$(ls -1 release_apks/*.apk | head -n 1)"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK_FILE" --clobber
-          else
-            FLAGS=(--title "$NAME" --target "${{ github.sha }}" --generate-notes)
+          publish_release() {
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" "$APK_FILE" --clobber
+              return $?
+            fi
+
+            FLAGS=(--title "$NAME" --target "${{ github.sha }}")
             if [ "$INPUT_RELEASE_MODE" = "draft" ]; then
               FLAGS+=(--draft)
             elif [ "$INPUT_RELEASE_MODE" = "prerelease" ]; then
               FLAGS+=(--prerelease)
             fi
-            gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}"
+
+            gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --generate-notes || \
+              gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --notes "Automated APK build #${{ github.run_number }} (${{ github.sha }})"
+          }
+
+          if ! OUTPUT="$(publish_release 2>&1)"; then
+            echo "$OUTPUT"
+            if echo "$OUTPUT" | grep -qiE "403|Resource not accessible by integration|permission"; then
+              echo "::warning::Could not publish GitHub Release due to repository token permissions. Signed APK is still available in the workflow Artifacts section. Enable 'Read and write permissions' under Settings -> Actions -> General to publish Releases."
+              exit 0
+            fi
+            exit 1
+          else
+            echo "$OUTPUT"
           fi

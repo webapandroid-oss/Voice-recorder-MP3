@@ -1,6 +1,9 @@
 name: Build & Release Android APK
 
 on:
+  push:
+    branches:
+      - "**"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -22,25 +25,220 @@ on:
           - published
           - prerelease
           - draft
-      run_tests:
-        description: "Run Unit & Robolectric tests before building"
-        type: choice
-        required: true
-        default: "enable"
-        options:
-          - enable
-          - disable
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build-apk:
-    name: Test, Build & Release APK
+  compile-kotlin-dex:
+    name: "1. Compile Kotlin (.kt -> .class -> .dex Multidex)"
+    runs-on: ubuntu-latest
+    outputs:
+      kotlin_version: ${{ steps.meta.outputs.kotlin_version }}
+      version_name: ${{ steps.meta.outputs.version_name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Detect preinstalled Android SDK
+        id: detect-sdk
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ -d "$SDK_ROOT" ]; then
+            echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+            echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+            [ -d "$SDK_ROOT/cmdline-tools/latest/bin" ] && echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+            [ -d "$SDK_ROOT/platform-tools" ] && echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          fi
+          if command -v sdkmanager >/dev/null 2>&1 || [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "has_sdkmanager=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_sdkmanager=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Android SDK (fallback when missing)
+        if: steps.detect-sdk.outputs.has_sdkmanager != 'true'
+        uses: android-actions/setup-android@v3
+
+      - name: Ensure Android SDK Platform 36 & Build-Tools 36.0.0
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          MISSING_PACKAGES=()
+          [ ! -d "$SDK_ROOT/platforms/android-36" ] && MISSING_PACKAGES+=("platforms;android-36")
+          [ ! -d "$SDK_ROOT/build-tools/36.0.0" ] && MISSING_PACKAGES+=("build-tools;36.0.0")
+          if [ ${#MISSING_PACKAGES[@]} -gt 0 ] || [ ! -f "$SDK_ROOT/licenses/android-sdk-license" ]; then
+            set +o pipefail
+            yes | sdkmanager --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
+            set -o pipefail
+          fi
+          if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
+            set +o pipefail
+            yes | sdkmanager --sdk_root="$SDK_ROOT" --install "${MISSING_PACKAGES[@]}"
+            set -o pipefail
+          fi
+
+      - name: Read Kotlin & App Version Metadata
+        id: meta
+        run: |
+          KOTLIN_VER="$(grep -m1 '^kotlin\s*=' gradle/libs.versions.toml | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+          KOTLIN_VER="${KOTLIN_VER:-2.4.21}"
+          VERSION_NAME="$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+          VERSION_NAME="${VERSION_NAME:-1.0}"
+          echo "kotlin_version=$KOTLIN_VER" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Kotlin Compiler
+        id: cache-kotlinc
+        uses: actions/cache@v4
+        with:
+          path: .cli-cache/kotlinc
+          key: kotlinc-${{ runner.os }}-${{ steps.meta.outputs.kotlin_version }}
+
+      - name: Download Kotlin Compiler & Compose Plugin
+        if: steps.cache-kotlinc.outputs.cache-hit != 'true'
+        env:
+          KOTLIN_VER: ${{ steps.meta.outputs.kotlin_version }}
+        run: |
+          mkdir -p .cli-cache/kotlinc
+          curl -fsSL -o /tmp/kotlin-compiler.zip "https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VER}/kotlin-compiler-${KOTLIN_VER}.zip"
+          unzip -q -o /tmp/kotlin-compiler.zip -d .cli-cache
+          rm -f /tmp/kotlin-compiler.zip
+          test -x .cli-cache/kotlinc/bin/kotlinc
+          test -f .cli-cache/kotlinc/lib/compose-compiler-plugin.jar
+
+      - name: Cache Resolved Maven Dependencies
+        uses: actions/cache@v4
+        with:
+          path: .cli-cache/maven
+          key: cli-maven-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'app/build.gradle.kts', '.github/scripts/resolve_deps.py') }}
+
+      - name: Resolve AndroidX, Compose & Kotlin Dependencies
+        run: |
+          python3 .github/scripts/resolve_deps.py \
+            --project-dir . \
+            --out-dir build/deps \
+            --cache-dir .cli-cache/maven
+
+      - name: Generate R.java & Resource ID Map for Compilation
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          AAPT2="${SDK_ROOT}/build-tools/36.0.0/aapt2"
+          ANDROID_JAR="${SDK_ROOT}/platforms/android-36/android.jar"
+          mkdir -p build/compiled_res build/gen_r build/r_classes
+
+          idx=0
+          while IFS= read -r res_dir; do
+            [ -z "$res_dir" ] && continue
+            "$AAPT2" compile --dir "$res_dir" -o "build/compiled_res/aar_${idx}.zip"
+            idx=$((idx + 1))
+          done < build/deps/res_dirs.txt
+
+          "$AAPT2" compile --dir app/src/main/res -o build/compiled_res/app.zip
+
+          EXTRA_PKGS="$(cat build/deps/extra_packages.txt)"
+          "$AAPT2" link \
+            -I "$ANDROID_JAR" \
+            --manifest build/deps/AndroidManifest.xml \
+            --min-sdk-version 24 \
+            --target-sdk-version 36 \
+            --version-code 1 \
+            --version-name "${{ steps.meta.outputs.version_name }}" \
+            --auto-add-overlay \
+            --extra-packages "$EXTRA_PKGS" \
+            --java build/gen_r \
+            --emit-ids build/stable_ids.txt \
+            -o build/temp-r.apk \
+            build/compiled_res/*.zip
+          rm -f build/temp-r.apk
+
+      - name: Compile R.java & Kotlin Sources (.kt -> .class)
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          ANDROID_JAR="${SDK_ROOT}/platforms/android-36/android.jar"
+          KOTLINC=".cli-cache/kotlinc/bin/kotlinc"
+          COMPOSE_PLUGIN=".cli-cache/kotlinc/lib/compose-compiler-plugin.jar"
+
+          mkdir -p build/r_classes build/kt_classes
+          find build/gen_r -name "*.java" | sort > build/r_sources.txt
+          javac -source 11 -target 11 -d build/r_classes @build/r_sources.txt
+
+          DEPS_CP="$(paste -sd: build/deps/classpath.txt)"
+          FULL_CP="build/r_classes:${ANDROID_JAR}:${DEPS_CP}"
+          find app/src/main/kotlin -name "*.kt" | sort > build/kt_sources.txt
+
+          "$KOTLINC" \
+            -jvm-target 11 \
+            -Xplugin="$COMPOSE_PLUGIN" \
+            -classpath "$FULL_CP" \
+            -d build/kt_classes \
+            @build/kt_sources.txt
+
+          jar cf build/app_classes.jar -C build/r_classes . -C build/kt_classes .
+          echo "Compiled $(find build/kt_classes -name '*.class' | wc -l) Kotlin classes and $(find build/r_classes -name '*.class' | wc -l) R classes."
+
+      - name: Cache Pre-Dexed Dependency JARs
+        id: cache-deps-dex
+        uses: actions/cache@v4
+        with:
+          path: .cli-cache/deps_dex
+          key: cli-deps-dex-sdk36-${{ hashFiles('gradle/libs.versions.toml', 'app/build.gradle.kts', '.github/scripts/resolve_deps.py') }}
+
+      - name: Pre-Dex Dependency Libraries (on cache miss)
+        if: steps.cache-deps-dex.outputs.cache-hit != 'true'
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          D8="${SDK_ROOT}/build-tools/36.0.0/d8"
+          ANDROID_JAR="${SDK_ROOT}/platforms/android-36/android.jar"
+          mkdir -p .cli-cache/deps_dex
+          "$D8" -JXmx4g --intermediate --min-api 24 --lib "$ANDROID_JAR" \
+            --output .cli-cache/deps_dex \
+            $(cat build/deps/classpath.txt) 2>build/d8_deps.log || {
+              tail -n 80 build/d8_deps.log >&2
+              exit 1
+            }
+
+      - name: Compile .class to Multidex .dex (D8)
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          D8="${SDK_ROOT}/build-tools/36.0.0/d8"
+          ANDROID_JAR="${SDK_ROOT}/platforms/android-36/android.jar"
+          mkdir -p build/dex
+          "$D8" -JXmx4g --min-api 24 --lib "$ANDROID_JAR" \
+            --output build/dex \
+            build/app_classes.jar \
+            .cli-cache/deps_dex/*.dex 2>build/d8_app.log || {
+              tail -n 80 build/d8_app.log >&2
+              exit 1
+            }
+          ls -lh build/dex/classes*.dex
+
+          mkdir -p build/job1_out/dex
+          cp build/dex/classes*.dex build/job1_out/dex/
+          cp build/stable_ids.txt build/job1_out/stable_ids.txt
+
+      - name: Upload Compiled Multidex & Resource ID Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-dex-and-ids
+          path: build/job1_out
+          if-no-files-found: error
+          retention-days: 7
+
+  compile-resources-aapt2:
+    name: "2. AAPT2 Compile, Manifest Link & resources.arsc"
+    needs: [compile-kotlin-dex]
     runs-on: ubuntu-latest
 
     steps:
@@ -71,156 +269,246 @@ jobs:
 
       - name: Setup Android SDK (fallback when missing)
         if: steps.detect-sdk.outputs.has_sdkmanager != 'true'
-        uses: android-actions/setup-android@v4
-        with:
-          packages: ""
+        uses: android-actions/setup-android@v3
 
       - name: Ensure Android SDK Platform 36 & Build-Tools 36.0.0
         run: |
           SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           MISSING_PACKAGES=()
-          [ ! -d "$SDK_ROOT/platform-tools" ] && MISSING_PACKAGES+=("platform-tools")
           [ ! -d "$SDK_ROOT/platforms/android-36" ] && MISSING_PACKAGES+=("platforms;android-36")
           [ ! -d "$SDK_ROOT/build-tools/36.0.0" ] && MISSING_PACKAGES+=("build-tools;36.0.0")
-
-          if [ ${#MISSING_PACKAGES[@]} -gt 0 ] || [ ! -d "$SDK_ROOT/platforms/android-36.1" ] || [ ! -f "$SDK_ROOT/licenses/android-sdk-license" ]; then
+          if [ ${#MISSING_PACKAGES[@]} -gt 0 ] || [ ! -f "$SDK_ROOT/licenses/android-sdk-license" ]; then
             set +o pipefail
             yes | sdkmanager --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
             set -o pipefail
           fi
-
           if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
-            echo "Installing missing required SDK packages: ${MISSING_PACKAGES[*]}"
             set +o pipefail
             yes | sdkmanager --sdk_root="$SDK_ROOT" --install "${MISSING_PACKAGES[@]}"
             set -o pipefail
           fi
 
-          if [ ! -d "$SDK_ROOT/platforms/android-36.1" ]; then
-            echo "Checking/installing platforms;android-36.1..."
-            set +o pipefail
-            yes | sdkmanager --sdk_root="$SDK_ROOT" --install "platforms;android-36.1" || true
-            set -o pipefail
-          fi
+      - name: Download Resource ID Map from Job 1
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-dex-and-ids
+          path: build/from_job1
 
-      - name: Check prebuilt libffmpeg.so binaries
-        id: check-ffmpeg
-        run: |
-          if [ -f "app/src/main/jniLibs/arm64-v8a/libffmpeg.so" ] && \
-             [ -f "app/src/main/jniLibs/armeabi-v7a/libffmpeg.so" ] && \
-             [ -f "app/src/main/jniLibs/x86_64/libffmpeg.so" ] && \
-             [ -f "app/src/main/jniLibs/x86/libffmpeg.so" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Cache compiled libffmpeg.so (when not committed)
-        if: steps.check-ffmpeg.outputs.present != 'true'
-        id: cache-ffmpeg-libs
+      - name: Restore Cached Maven Dependencies
         uses: actions/cache@v4
         with:
-          path: app/src/main/jniLibs
-          key: libffmpeg-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/**') }}
+          path: .cli-cache/maven
+          key: cli-maven-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'app/build.gradle.kts', '.github/scripts/resolve_deps.py') }}
 
-      - name: Build libffmpeg.so on cache miss
-        if: steps.check-ffmpeg.outputs.present != 'true' && steps.cache-ffmpeg-libs.outputs.cache-hit != 'true'
-        env:
-          WORK_DIR: /tmp/native_build
+      - name: Prepare Dependency Resources & Merged AndroidManifest.xml
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq curl xz-utils tar bzip2 python3 binutils make file pkg-config autotools-dev
+          python3 .github/scripts/resolve_deps.py \
+            --project-dir . \
+            --out-dir build/deps \
+            --cache-dir .cli-cache/maven
+
+          mkdir -p build/aar_jni
+          while IFS= read -r jdir; do
+            [ -z "$jdir" ] && continue
+            cp -rn "$jdir"/* build/aar_jni/ || true
+          done < build/deps/jni_dirs.txt
+
+      - name: AAPT2 Compile Resources (res/) & Link AndroidManifest.xml -> resources.arsc
+        run: |
           SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          export ANDROID_NDK_HOME="${SDK_ROOT}/ndk/28.2.13676358"
-          if [ ! -d "$ANDROID_NDK_HOME" ]; then
-            set +o pipefail
-            yes | sdkmanager --sdk_root="$SDK_ROOT" --install "ndk;28.2.13676358"
-            set -o pipefail
-          fi
-          chmod +x app/src/main/cpp/build_libffmpeg.sh
-          bash app/src/main/cpp/build_libffmpeg.sh
+          AAPT2="${SDK_ROOT}/build-tools/36.0.0/aapt2"
+          ANDROID_JAR="${SDK_ROOT}/platforms/android-36/android.jar"
+          mkdir -p build/compiled_res
 
-      - name: Setup Gradle 9.3.1 with Build & Dependency Caching
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: "9.3.1"
-          cache-provider: basic
-          cache-read-only: false
+          idx=0
+          while IFS= read -r res_dir; do
+            [ -z "$res_dir" ] && continue
+            "$AAPT2" compile --dir "$res_dir" -o "build/compiled_res/aar_${idx}.zip"
+            idx=$((idx + 1))
+          done < build/deps/res_dirs.txt
 
-      - name: Cache Robolectric Android Runtime JARs
-        if: ${{ inputs.run_tests == 'enable' }}
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository/org/robolectric
-          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'app/src/test/**') }}
-          restore-keys: |
-            robolectric-${{ runner.os }}-
+          "$AAPT2" compile --dir app/src/main/res -o build/compiled_res/app.zip
 
-      - name: Restore debug.keystore from base64
-        run: |
-          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
-            tr -d ' \t\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
+          EXTRA_PKGS="$(cat build/deps/extra_packages.txt)"
+          mkdir -p build/job2_out/aar_jni
+          if [ -d build/aar_jni ]; then
+            cp -rn build/aar_jni/* build/job2_out/aar_jni/ || true
           fi
 
-      - name: Run Unit & Robolectric Tests
-        if: ${{ inputs.run_tests == 'enable' }}
-        run: gradle :app:testDebugUnitTest --stacktrace
+          "$AAPT2" link \
+            -I "$ANDROID_JAR" \
+            --manifest build/deps/AndroidManifest.xml \
+            --min-sdk-version 24 \
+            --target-sdk-version 36 \
+            --version-code 1 \
+            --version-name "${{ needs.compile-kotlin-dex.outputs.version_name }}" \
+            --auto-add-overlay \
+            --extra-packages "$EXTRA_PKGS" \
+            --stable-ids build/from_job1/stable_ids.txt \
+            -o build/job2_out/base-resources.apk \
+            build/compiled_res/*.zip
 
-      - name: Build Debug APK
-        run: gradle :app:assembleDebug --stacktrace
+          unzip -l build/job2_out/base-resources.apk | grep -E "resources\.arsc|AndroidManifest\.xml"
 
-      - name: Build Signed Release APK (when release signing secrets exist)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.STORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
-        run: |
-          printf '%s' "$KEYSTORE_BASE64" | tr -d ' \t\r\n' | base64 -d > "$KEYSTORE_PATH"
-          gradle :app:assembleRelease --stacktrace
-
-      - name: Prepare Release APKs & Metadata
-        id: release-meta
-        env:
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
-        run: |
-          mkdir -p release_apks
-          cp app/build/outputs/apk/debug/*.apk release_apks/
-          if compgen -G "app/build/outputs/apk/release/*.apk" > /dev/null; then
-            cp app/build/outputs/apk/release/*.apk release_apks/
-          fi
-          ls -lh release_apks/
-
-          VERSION_NAME="$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/' || true)"
-          VERSION_NAME="${VERSION_NAME:-1.0}"
-          CLEAN_TAG="$(printf '%s' "$INPUT_RELEASE_TAG" | xargs || true)"
-          CLEAN_NAME="$(printf '%s' "$INPUT_RELEASE_NAME" | xargs || true)"
-          TAG="${CLEAN_TAG:-v${VERSION_NAME}-build.${{ github.run_number }}}"
-          NAME="${CLEAN_NAME:-Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})}"
-
-          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
-          echo "release_name=$NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Upload APK Workflow Artifact
+      - name: Upload AAPT2 Base APK & AAR Native Libs
         uses: actions/upload-artifact@v4
         with:
-          name: voice-recorder-apks-${{ github.run_number }}
+          name: aapt2-base-apk
+          path: build/job2_out
+          if-no-files-found: error
+          retention-days: 7
+
+  package-sign-release:
+    name: "3. Collect FFmpeg Libs, Pack APK, Sign & Release"
+    needs: [compile-kotlin-dex, compile-resources-aapt2]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Detect preinstalled Android SDK
+        id: detect-sdk
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ -d "$SDK_ROOT" ]; then
+            echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+            echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+            [ -d "$SDK_ROOT/cmdline-tools/latest/bin" ] && echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+            [ -d "$SDK_ROOT/platform-tools" ] && echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          fi
+          if command -v sdkmanager >/dev/null 2>&1 || [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "has_sdkmanager=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_sdkmanager=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Android SDK (fallback when missing)
+        if: steps.detect-sdk.outputs.has_sdkmanager != 'true'
+        uses: android-actions/setup-android@v3
+
+      - name: Ensure Android Build-Tools 36.0.0
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ ! -d "$SDK_ROOT/build-tools/36.0.0" ] || [ ! -f "$SDK_ROOT/licenses/android-sdk-license" ]; then
+            set +o pipefail
+            yes | sdkmanager --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
+            yes | sdkmanager --sdk_root="$SDK_ROOT" --install "build-tools;36.0.0"
+            set -o pipefail
+          fi
+
+      - name: Download Multidex (.dex) from Job 1
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-dex-and-ids
+          path: build/dex_in
+
+      - name: Download AAPT2 Base APK from Job 2
+        uses: actions/download-artifact@v4
+        with:
+          name: aapt2-base-apk
+          path: build/aapt2_in
+
+      - name: Collect or Build FFmpeg Native Libraries from Workflow Artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISPATCH_REF: ${{ github.ref_type == 'branch' && github.ref_name || github.event.repository.default_branch }}
+        run: |
+          python3 .github/scripts/collect_ffmpeg_artifacts.py \
+            --repo "${{ github.repository }}" \
+            --ref "$DISPATCH_REF" \
+            --zips-dir build/ffmpeg_zips \
+            --extract-dir build/ffmpeg_extracted \
+            --lib-out-dir build/apk_stage/lib
+          ls -lh build/apk_stage/lib/*/libffmpeg.so
+
+      - name: Pack Native Libraries (lib/) & Multidex (.dex) into AAPT2 APK
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          ZIPALIGN="${SDK_ROOT}/build-tools/36.0.0/zipalign"
+
+          if [ -d build/aapt2_in/aar_jni ]; then
+            cp -rn build/aapt2_in/aar_jni/* build/apk_stage/lib/ || true
+          fi
+
+          find build/dex_in -name "classes*.dex" -exec cp {} build/apk_stage/ \;
+          cp build/aapt2_in/base-resources.apk build/unaligned.apk
+
+          (
+            cd build/apk_stage
+            zip -q -0 -r ../unaligned.apk lib
+            zip -q -u ../unaligned.apk classes*.dex
+          )
+
+          "$ZIPALIGN" -P 16 -f 4 build/unaligned.apk build/aligned.apk
+          unzip -l build/aligned.apk | grep -E "classes.*\.dex|lib/.*\.so|resources\.arsc"
+
+      - name: Sign APK with Debug Key using apksigner
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          APKSIGNER="${SDK_ROOT}/build-tools/36.0.0/apksigner"
+
+          if [ -f "debug.keystore.base64" ]; then
+            tr -d ' \t\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
+          else
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          mkdir -p release_apks
+          APK_OUT="release_apks/voice-recorder-v${{ needs.compile-kotlin-dex.outputs.version_name }}-debug.apk"
+          "$APKSIGNER" sign \
+            --ks debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "$APK_OUT" \
+            build/aligned.apk
+
+          "$APKSIGNER" verify --verbose "$APK_OUT"
+          ls -lh "$APK_OUT"
+
+      - name: Upload Signed APK Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-recorder-apk-${{ github.run_number }}
           path: release_apks/*.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload APK to GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Publish Signed APK to GitHub Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.release-meta.outputs.tag_name }}
-          name: ${{ steps.release-meta.outputs.release_name }}
-          target_commitish: ${{ github.sha }}
-          files: release_apks/*.apk
-          fail_on_unmatched_files: true
-          draft: ${{ inputs.release_mode == 'draft' }}
-          prerelease: ${{ inputs.release_mode == 'prerelease' }}
-          generate_release_notes: true
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+          INPUT_RELEASE_MODE: ${{ inputs.release_mode }}
+          VERSION_NAME: ${{ needs.compile-kotlin-dex.outputs.version_name }}
+        run: |
+          CLEAN_TAG="$(printf '%s' "$INPUT_RELEASE_TAG" | xargs || true)"
+          CLEAN_NAME="$(printf '%s' "$INPUT_RELEASE_NAME" | xargs || true)"
+          TAG="${CLEAN_TAG:-v${VERSION_NAME}-build.${{ github.run_number }}}"
+          NAME="${CLEAN_NAME:-Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})}"
+          APK_FILE="$(ls -1 release_apks/*.apk | head -n 1)"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_FILE" --clobber
+          else
+            FLAGS=(--title "$NAME" --target "${{ github.sha }}" --generate-notes)
+            if [ "$INPUT_RELEASE_MODE" = "draft" ]; then
+              FLAGS+=(--draft)
+            elif [ "$INPUT_RELEASE_MODE" = "prerelease" ]; then
+              FLAGS+=(--prerelease)
+            fi
+            gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}"
+          fi

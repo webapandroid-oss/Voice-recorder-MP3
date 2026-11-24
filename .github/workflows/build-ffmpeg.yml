@@ -25,9 +25,12 @@ on:
           - enable
           - disable
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   prepare:
@@ -93,8 +96,25 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+      - name: Detect preinstalled Android SDK
+        id: detect-sdk
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ -d "$SDK_ROOT" ]; then
+            echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+            echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+            [ -d "$SDK_ROOT/cmdline-tools/latest/bin" ] && echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+            [ -d "$SDK_ROOT/platform-tools" ] && echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          fi
+          if command -v sdkmanager >/dev/null 2>&1 || [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "has_sdkmanager=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_sdkmanager=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Android SDK (fallback when missing)
+        if: steps.detect-sdk.outputs.has_sdkmanager != 'true'
+        uses: android-actions/setup-android@v3
 
       - name: Cache Android NDK r28c
         id: cache-ndk

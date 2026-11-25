@@ -511,8 +511,16 @@ jobs:
         run: |
           mkdir -p build
           NOTES_FILE="build/release_notes.md"
-          APK_FILE="$(ls -1 release_apks/*.apk | head -n 1)"
-          APK_BASENAME="$(basename "$APK_FILE")"
+          APK_FILE=""
+          for f in release_apks/*.apk; do
+            if [ -f "$f" ]; then
+              APK_FILE="$f"
+              break
+            fi
+          done
+          APK_BASENAME="$(basename "${APK_FILE:-app.apk}")"
+
+          git config --global --add safe.directory "${GITHUB_WORKSPACE:-$(pwd)}" 2>/dev/null || true
 
           {
             echo "## Voice Recorder v${VERSION_NAME} (Code ${VERSION_CODE})"
@@ -533,7 +541,7 @@ jobs:
                   }
                 }
                 in_section { print }
-              ' CHANGELOG.md)"
+              ' CHANGELOG.md | tr -d '\r' || true)"
               if [ -n "${SECTION// /}" ]; then
                 echo "### Changelog"
                 echo "$SECTION"
@@ -543,9 +551,9 @@ jobs:
 
             PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
             if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
-              COMMITS="$(git log "${PREV_TAG}..HEAD" --no-merges --pretty=format:"- %s (%h)" -n 30 || true)"
+              COMMITS="$(git log "${PREV_TAG}..HEAD" --no-merges --pretty=format:"- %s (%h)" -n 30 2>/dev/null || true)"
             else
-              COMMITS="$(git log --no-merges --pretty=format:"- %s (%h)" -n 20 || true)"
+              COMMITS="$(git log --no-merges --pretty=format:"- %s (%h)" -n 20 2>/dev/null || true)"
             fi
 
             if [ -n "${COMMITS// /}" ]; then
@@ -561,7 +569,9 @@ jobs:
           } > "$NOTES_FILE"
 
           cat "$NOTES_FILE"
-          cat "$NOTES_FILE" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            cat "$NOTES_FILE" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Publish Signed APK to GitHub Release
         env:
@@ -575,24 +585,42 @@ jobs:
           CLEAN_NAME="$(printf '%s' "$INPUT_RELEASE_NAME" | xargs || true)"
           TAG="${CLEAN_TAG:-v${VERSION_NAME}-build.${{ github.run_number }}}"
           NAME="${CLEAN_NAME:-Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})}"
-          APK_FILE="$(ls -1 release_apks/*.apk | head -n 1)"
+          APK_FILE=""
+          for f in release_apks/*.apk; do
+            if [ -f "$f" ]; then
+              APK_FILE="$f"
+              break
+            fi
+          done
+          if [ -z "$APK_FILE" ] || [ ! -f "$APK_FILE" ]; then
+            echo "No APK file found in release_apks/" >&2
+            exit 1
+          fi
           NOTES_FILE="build/release_notes.md"
 
           publish_release() {
             if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release upload "$TAG" "$APK_FILE" --clobber && \
-                gh release edit "$TAG" --title "$NAME" --notes-file "$NOTES_FILE"
-              return $?
+              gh release upload "$TAG" "$APK_FILE" --clobber || return $?
+              if [ -f "$NOTES_FILE" ]; then
+                gh release edit "$TAG" --title "$NAME" --notes-file "$NOTES_FILE" || true
+              fi
+              return 0
             fi
 
-            FLAGS=(--title "$NAME" --target "${{ github.sha }}" --notes-file "$NOTES_FILE")
+            FLAGS=(--title "$NAME" --target "${{ github.sha }}")
             if [ "$INPUT_RELEASE_MODE" = "draft" ]; then
               FLAGS+=(--draft)
             elif [ "$INPUT_RELEASE_MODE" = "prerelease" ]; then
               FLAGS+=(--prerelease)
             fi
 
-            gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}"
+            if [ -f "$NOTES_FILE" ]; then
+              gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --notes-file "$NOTES_FILE" || \
+                gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --notes "Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})"
+            else
+              gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --generate-notes || \
+                gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --notes "Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})"
+            fi
           }
 
           if ! OUTPUT="$(publish_release 2>&1)"; then

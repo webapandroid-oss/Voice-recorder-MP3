@@ -154,23 +154,7 @@ jobs:
             idx=$((idx + 1))
           done < build/deps/res_dirs.txt
 
-          python3 -c '
-import os, re
-from pathlib import Path
-from xml.sax.saxutils import escape
-repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
-if repo:
-    p = Path("app/src/main/res/values/strings.xml")
-    text = p.read_text(encoding="utf-8")
-    text = re.sub(
-        r"(<string\s+name=\"github_repo\"[^>]*>).*?(</string>)",
-        lambda m: m.group(1) + escape(repo) + m.group(2),
-        text,
-        count=1,
-        flags=re.DOTALL,
-    )
-    p.write_text(text, encoding="utf-8")
-'
+          python3 -c 'import os, re; from pathlib import Path; from xml.sax.saxutils import escape; repo = os.environ.get("GITHUB_REPOSITORY", "").strip(); p = Path("app/src/main/res/values/strings.xml"); p.write_text(re.sub(r"(<string\s+name=\"github_repo\"[^>]*>).*?(</string>)", lambda m: m.group(1) + escape(repo) + m.group(2), p.read_text(encoding="utf-8"), count=1, flags=re.DOTALL), encoding="utf-8") if repo else None'
 
           "$AAPT2" compile --dir app/src/main/res -o build/compiled_res/app.zip
 
@@ -354,23 +338,7 @@ if repo:
             idx=$((idx + 1))
           done < build/deps/res_dirs.txt
 
-          python3 -c '
-import os, re
-from pathlib import Path
-from xml.sax.saxutils import escape
-repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
-if repo:
-    p = Path("app/src/main/res/values/strings.xml")
-    text = p.read_text(encoding="utf-8")
-    text = re.sub(
-        r"(<string\s+name=\"github_repo\"[^>]*>).*?(</string>)",
-        lambda m: m.group(1) + escape(repo) + m.group(2),
-        text,
-        count=1,
-        flags=re.DOTALL,
-    )
-    p.write_text(text, encoding="utf-8")
-'
+          python3 -c 'import os, re; from pathlib import Path; from xml.sax.saxutils import escape; repo = os.environ.get("GITHUB_REPOSITORY", "").strip(); p = Path("app/src/main/res/values/strings.xml"); p.write_text(re.sub(r"(<string\s+name=\"github_repo\"[^>]*>).*?(</string>)", lambda m: m.group(1) + escape(repo) + m.group(2), p.read_text(encoding="utf-8"), count=1, flags=re.DOTALL), encoding="utf-8") if repo else None'
 
           "$AAPT2" compile --dir app/src/main/res -o build/compiled_res/app.zip
 

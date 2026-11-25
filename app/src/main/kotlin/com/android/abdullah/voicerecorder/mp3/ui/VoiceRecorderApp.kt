@@ -126,7 +126,8 @@ fun VoiceRecorderApp(
             onCancelDownload = viewModel::cancelDownload,
             onInstallNow = viewModel::onInstallNowClicked,
             onRequestUnknownSourcePermission = viewModel::onRequestUnknownSourcePermission,
-            onRefreshInstallPermission = viewModel::refreshInstallPermissionState
+            onRefreshInstallPermission = viewModel::refreshInstallPermissionState,
+            onEditRepo = viewModel::openRepoConfiguration
         )
         return
     }
@@ -153,6 +154,8 @@ fun VoiceRecorderApp(
                     },
                     actions = {
                         val hasPendingUpdate = updateState is UpdateUiState.Available ||
+                            updateState is UpdateUiState.Downloading ||
+                            updateState is UpdateUiState.Installing ||
                             updateState is UpdateUiState.ReadyToInstall
                         Box {
                             IconButton(

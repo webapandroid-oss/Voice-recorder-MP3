@@ -12,9 +12,12 @@ import androidx.lifecycle.viewModelScope
 import com.android.abdullah.voicerecorder.mp3.R
 import com.android.abdullah.voicerecorder.mp3.audio.Mp3AudioPlayer
 import com.android.abdullah.voicerecorder.mp3.data.GitHubUpdateRepository
+import com.android.abdullah.voicerecorder.mp3.data.InstallSessionEvent
+import com.android.abdullah.voicerecorder.mp3.data.InstallSessionEventBus
 import com.android.abdullah.voicerecorder.mp3.data.RecordingsRepository
 import com.android.abdullah.voicerecorder.mp3.data.ReleaseCheckResult
 import com.android.abdullah.voicerecorder.mp3.data.SettingsRepository
+import com.android.abdullah.voicerecorder.mp3.model.GitHubReleaseInfo
 import com.android.abdullah.voicerecorder.mp3.model.Mp3Bitrate
 import com.android.abdullah.voicerecorder.mp3.model.Mp3ChannelMode
 import com.android.abdullah.voicerecorder.mp3.model.Mp3Recording
@@ -61,7 +64,9 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     private var serviceEventsJob: Job? = null
     private var updateCheckJob: Job? = null
     private var updateDownloadJob: Job? = null
+    private var updateInstallJob: Job? = null
     private var isBound = false
+    private var pendingInstallAfterPermission = false
 
     private val _liveRecordingState = MutableStateFlow(LiveRecordingState())
     val liveRecordingState: StateFlow<LiveRecordingState> = _liveRecordingState.asStateFlow()
@@ -124,7 +129,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     val configuredRepo: StateFlow<String> = settingsRepository.githubRepoFlow
         .map { saved ->
             val bundled = context.getString(R.string.github_repo).trim()
-            bundled.ifBlank { saved.trim() }
+            saved.trim().ifBlank { bundled }
         }
         .stateIn(
             viewModelScope,
@@ -150,7 +155,64 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     init {
         refreshRecordings()
         bindRecordingService()
+        observeInstallSessionEvents()
         checkForUpdates(autoOpenIfAvailable = true)
+    }
+
+    private fun observeInstallSessionEvents() {
+        viewModelScope.launch {
+            InstallSessionEventBus.events.collect { event ->
+                when (event) {
+                    is InstallSessionEvent.PendingUserAction -> {
+                        val current = _updateState.value
+                        if (current is UpdateUiState.Installing) {
+                            _updateState.value = UpdateUiState.ReadyToInstall(
+                                currentVersion = current.currentVersion,
+                                release = current.release,
+                                apkFilePath = current.apkFilePath,
+                                needsUnknownSourcePermission = false,
+                                signatureMismatch = !updateRepository.hasCompatibleSigningCertificate(File(current.apkFilePath))
+                            )
+                        }
+                        _installIntentEvents.tryEmit(event.confirmIntent)
+                    }
+
+                    is InstallSessionEvent.Succeeded -> {
+                        _uiMessages.tryEmit("Update installed successfully")
+                    }
+
+                    is InstallSessionEvent.Aborted -> {
+                        val current = _updateState.value
+                        if (current is UpdateUiState.Installing) {
+                            _updateState.value = UpdateUiState.ReadyToInstall(
+                                currentVersion = current.currentVersion,
+                                release = current.release,
+                                apkFilePath = current.apkFilePath,
+                                needsUnknownSourcePermission = !updateRepository.canRequestPackageInstalls(),
+                                signatureMismatch = !updateRepository.hasCompatibleSigningCertificate(File(current.apkFilePath))
+                            )
+                        }
+                    }
+
+                    is InstallSessionEvent.Failed -> {
+                        val current = _updateState.value
+                        val installed = updateRepository.getInstalledVersion()
+                        val release = when (current) {
+                            is UpdateUiState.Installing -> current.release
+                            is UpdateUiState.ReadyToInstall -> current.release
+                            is UpdateUiState.Error -> current.release
+                            else -> null
+                        }
+                        _updateState.value = UpdateUiState.Error(
+                            currentVersion = installed.versionName,
+                            message = event.message,
+                            release = release
+                        )
+                        _uiMessages.tryEmit(event.message)
+                    }
+                }
+            }
+        }
     }
 
     private fun bindRecordingService() {
@@ -367,12 +429,22 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         _showUpdateScreen.value = false
     }
 
+    fun openRepoConfiguration() {
+        updateCheckJob?.cancel()
+        updateDownloadJob?.cancel()
+        pendingInstallAfterPermission = false
+        val installed = updateRepository.getInstalledVersion()
+        _updateState.value = UpdateUiState.RepoNotConfigured(installed.versionName)
+    }
+
     fun saveRepoAndCheck(rawRepo: String) {
         val slug = GitHubUpdateRepository.normalizeRepoSlug(rawRepo)
         if (slug == null) {
             _uiMessages.tryEmit("Enter a valid repository like owner/repo")
             return
         }
+        updateDownloadJob?.cancel()
+        pendingInstallAfterPermission = false
         viewModelScope.launch {
             settingsRepository.updateGithubRepo(slug)
             checkForUpdates(autoOpenIfAvailable = false, explicitRepo = slug)
@@ -386,7 +458,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
             val bundledRepo = context.getString(R.string.github_repo).trim()
             val savedRepo = settingsRepository.githubRepoFlow.first().trim()
             val repo = explicitRepo?.trim()?.ifBlank { null }
-                ?: bundledRepo.ifBlank { savedRepo }
+                ?: savedRepo.ifBlank { bundledRepo }
 
             if (repo.isBlank()) {
                 _updateState.value = UpdateUiState.RepoNotConfigured(installed.versionName)
@@ -399,10 +471,21 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
             }.onSuccess { result ->
                 when (result) {
                     is ReleaseCheckResult.UpdateAvailable -> {
-                        _updateState.value = UpdateUiState.Available(
-                            currentVersion = installed.versionName,
-                            release = result.release
-                        )
+                        val cachedApk = updateRepository.findValidDownloadedApk(result.release)
+                        if (cachedApk != null) {
+                            _updateState.value = UpdateUiState.ReadyToInstall(
+                                currentVersion = installed.versionName,
+                                release = result.release,
+                                apkFilePath = cachedApk.absolutePath,
+                                needsUnknownSourcePermission = !updateRepository.canRequestPackageInstalls(),
+                                signatureMismatch = !updateRepository.hasCompatibleSigningCertificate(cachedApk)
+                            )
+                        } else {
+                            _updateState.value = UpdateUiState.Available(
+                                currentVersion = installed.versionName,
+                                release = result.release
+                            )
+                        }
                         if (autoOpenIfAvailable) {
                             _showUpdateScreen.value = true
                         }
@@ -433,6 +516,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         } ?: return
 
         val installed = updateRepository.getInstalledVersion()
+        pendingInstallAfterPermission = false
         updateDownloadJob?.cancel()
         updateDownloadJob = viewModelScope.launch {
             _updateState.value = UpdateUiState.Downloading(
@@ -445,9 +529,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
 
             runCatching {
                 updateRepository.downloadApk(
-                    downloadUrl = release.apkDownloadUrl,
-                    assetFileName = release.apkAssetName,
-                    expectedSizeBytes = release.apkSizeBytes
+                    release = release
                 ) { downloaded, total ->
                     val progress = if (total > 0L) {
                         (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
@@ -463,12 +545,18 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }.onSuccess { apkFile ->
+                val canInstall = updateRepository.canRequestPackageInstalls()
+                val signatureMismatch = !updateRepository.hasCompatibleSigningCertificate(apkFile)
                 _updateState.value = UpdateUiState.ReadyToInstall(
                     currentVersion = installed.versionName,
                     release = release,
                     apkFilePath = apkFile.absolutePath,
-                    needsUnknownSourcePermission = false
+                    needsUnknownSourcePermission = !canInstall,
+                    signatureMismatch = signatureMismatch
                 )
+                if (canInstall && !signatureMismatch) {
+                    startInAppInstall(installed.versionName, release, apkFile)
+                }
             }.onFailure { err ->
                 if (err is CancellationException) {
                     _updateState.value = UpdateUiState.Available(
@@ -493,32 +581,71 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     fun onInstallNowClicked() {
         val state = _updateState.value as? UpdateUiState.ReadyToInstall ?: return
         val apkFile = File(state.apkFilePath)
-        if (!apkFile.exists() || apkFile.length() <= 0L) {
+        if (!updateRepository.isValidUpdateApk(apkFile)) {
             _updateState.value = UpdateUiState.Available(
                 currentVersion = state.currentVersion,
                 release = state.release
             )
-            _uiMessages.tryEmit("Downloaded APK was removed. Please download again.")
+            _uiMessages.tryEmit("Downloaded APK is missing or invalid. Please download again.")
             return
         }
 
         if (!updateRepository.canRequestPackageInstalls()) {
+            pendingInstallAfterPermission = true
             _updateState.value = state.copy(needsUnknownSourcePermission = true)
             return
         }
 
-        _updateState.value = state.copy(needsUnknownSourcePermission = false)
-        _installIntentEvents.tryEmit(updateRepository.buildInstallApkIntent(apkFile))
+        pendingInstallAfterPermission = false
+        startInAppInstall(state.currentVersion, state.release, apkFile)
     }
 
     fun onRequestUnknownSourcePermission() {
+        pendingInstallAfterPermission = true
         _unknownSourceIntentEvents.tryEmit(updateRepository.buildUnknownSourcesSettingsIntent())
     }
 
     fun refreshInstallPermissionState() {
         val state = _updateState.value as? UpdateUiState.ReadyToInstall ?: return
-        if (state.needsUnknownSourcePermission && updateRepository.canRequestPackageInstalls()) {
-            _updateState.value = state.copy(needsUnknownSourcePermission = false)
+        val canInstall = updateRepository.canRequestPackageInstalls()
+        if (state.needsUnknownSourcePermission != !canInstall) {
+            _updateState.value = state.copy(needsUnknownSourcePermission = !canInstall)
+        }
+        if (canInstall && pendingInstallAfterPermission) {
+            pendingInstallAfterPermission = false
+            val apkFile = File(state.apkFilePath)
+            if (updateRepository.isValidUpdateApk(apkFile)) {
+                startInAppInstall(state.currentVersion, state.release, apkFile)
+            }
+        }
+    }
+
+    private fun startInAppInstall(
+        currentVersion: String,
+        release: GitHubReleaseInfo,
+        apkFile: File
+    ) {
+        updateInstallJob?.cancel()
+        updateInstallJob = viewModelScope.launch {
+            _updateState.value = UpdateUiState.Installing(
+                currentVersion = currentVersion,
+                release = release,
+                apkFilePath = apkFile.absolutePath
+            )
+            runCatching {
+                updateRepository.installApkViaPackageInstaller(apkFile)
+            }.onFailure { err ->
+                if (err is CancellationException) throw err
+                // Fallback to ACTION_VIEW package installer if session creation fails on an OEM ROM
+                _updateState.value = UpdateUiState.ReadyToInstall(
+                    currentVersion = currentVersion,
+                    release = release,
+                    apkFilePath = apkFile.absolutePath,
+                    needsUnknownSourcePermission = !updateRepository.canRequestPackageInstalls(),
+                    signatureMismatch = !updateRepository.hasCompatibleSigningCertificate(apkFile)
+                )
+                _installIntentEvents.tryEmit(updateRepository.buildInstallApkIntent(apkFile))
+            }
         }
     }
 
@@ -526,6 +653,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         super.onCleared()
         updateCheckJob?.cancel()
         updateDownloadJob?.cancel()
+        updateInstallJob?.cancel()
         audioPlayer.release()
         if (isBound) {
             try {

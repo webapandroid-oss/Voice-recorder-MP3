@@ -1,7 +1,11 @@
 package com.android.abdullah.voicerecorder.mp3.data
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -17,8 +21,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 
 data class InstalledVersionInfo(
     val versionName: String,
@@ -34,13 +41,13 @@ class GitHubUpdateRepository(private val context: Context) {
 
     fun getInstalledVersion(): InstalledVersionInfo {
         return try {
-            val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val pkgInfo = getPackageInfoCompat(context.packageName, 0)
             InstalledVersionInfo(
-                versionName = pkgInfo.versionName ?: "1.0.2",
-                versionCode = PackageInfoCompat.getLongVersionCode(pkgInfo)
+                versionName = pkgInfo?.versionName ?: "1.0.3",
+                versionCode = pkgInfo?.let { PackageInfoCompat.getLongVersionCode(it) } ?: 4L
             )
         } catch (_: Exception) {
-            InstalledVersionInfo(versionName = "1.0.2", versionCode = 3L)
+            InstalledVersionInfo(versionName = "1.0.3", versionCode = 4L)
         }
     }
 
@@ -76,16 +83,120 @@ class GitHubUpdateRepository(private val context: Context) {
             setDataAndType(contentUri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
+            putExtra(Intent.EXTRA_RETURN_RESULT, true)
+        }
+    }
+
+    suspend fun installApkViaPackageInstaller(apkFile: File) = withContext(Dispatchers.IO) {
+        val packageInstaller = context.packageManager.packageInstaller
+        // Abandon any stale unclosed sessions owned by this app
+        runCatching {
+            packageInstaller.mySessions.forEach { info ->
+                runCatching { packageInstaller.abandonSession(info.sessionId) }
+            }
+        }
+
+        val apkSize = apkFile.length()
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+            setAppPackageName(context.packageName)
+            setSize(apkSize)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                setInstallReason(PackageManager.INSTALL_REASON_USER)
+            }
+        }
+
+        val sessionId = packageInstaller.createSession(params)
+        var session: PackageInstaller.Session? = null
+        try {
+            session = packageInstaller.openSession(sessionId)
+            session.openWrite("voice-recorder-update.apk", 0, apkSize).use { out ->
+                apkFile.inputStream().use { input ->
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        out.write(buffer, 0, read)
+                    }
+                }
+                session.fsync(out)
+            }
+
+            val callbackIntent = Intent(context, ApkInstallReceiver::class.java)
+            val pendingFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                sessionId,
+                callbackIntent,
+                pendingFlags
+            )
+            session.commit(pendingIntent.intentSender)
+        } catch (t: Throwable) {
+            runCatching { session?.abandon() }
+            runCatching { packageInstaller.abandonSession(sessionId) }
+            throw t
+        } finally {
+            runCatching { session?.close() }
+        }
+    }
+
+    fun findValidDownloadedApk(release: GitHubReleaseInfo): File? {
+        val updatesDir = File(context.filesDir, UPDATES_DIR_NAME)
+        if (!updatesDir.exists()) return null
+
+        val targetFile = File(updatesDir, resolveApkFileName(release))
+        if (!targetFile.isFile || targetFile.length() <= 0L) return null
+
+        if (release.apkSizeBytes > 0L && targetFile.length() != release.apkSizeBytes) {
+            return null
+        }
+
+        return if (isValidUpdateApk(targetFile)) targetFile else null
+    }
+
+    fun isValidUpdateApk(apkFile: File): Boolean {
+        if (!apkFile.isFile || apkFile.length() <= 0L) return false
+        val archiveInfo = getPackageArchiveInfoCompat(apkFile.absolutePath, 0) ?: return false
+        return archiveInfo.packageName == context.packageName
+    }
+
+    fun hasCompatibleSigningCertificate(apkFile: File): Boolean {
+        return try {
+            val installedCerts = extractSigningCerts(
+                getPackageInfoCompat(context.packageName, signingFlags())
+            )
+            val archiveCerts = extractSigningCerts(
+                getPackageArchiveInfoCompat(apkFile.absolutePath, signingFlags())
+            )
+            if (installedCerts.isEmpty() || archiveCerts.isEmpty()) {
+                true
+            } else {
+                installedCerts.intersect(archiveCerts).isNotEmpty()
+            }
+        } catch (_: Exception) {
+            true
         }
     }
 
     suspend fun checkLatestRelease(rawRepo: String): ReleaseCheckResult = withContext(Dispatchers.IO) {
         val repoSlug = normalizeRepoSlug(rawRepo)
-            ?: throw IllegalArgumentException("Invalid GitHub repository format. Use owner/repo.")
+            ?: throw IllegalArgumentException("Invalid GitHub repository format. Use owner/repo or a GitHub URL.")
 
         val installed = getInstalledVersion()
-        val latestRelease = fetchLatestGitHubRelease(repoSlug)
-            ?: return@withContext ReleaseCheckResult.UpToDate(latestVersion = installed.versionName)
+        val latestRelease = try {
+            fetchLatestGitHubRelease(repoSlug)
+        } catch (e: UnknownHostException) {
+            throw IllegalStateException("No internet connection. Check your network and try again.", e)
+        } catch (e: SocketTimeoutException) {
+            throw IllegalStateException("Connection to GitHub timed out. Please try again.", e)
+        } catch (e: IOException) {
+            throw IllegalStateException("Network error while contacting GitHub: ${e.message ?: "I/O error"}", e)
+        } ?: return@withContext ReleaseCheckResult.UpToDate(latestVersion = installed.versionName)
 
         if (isRemoteNewer(latestRelease, installed)) {
             ReleaseCheckResult.UpdateAvailable(latestRelease)
@@ -95,25 +206,44 @@ class GitHubUpdateRepository(private val context: Context) {
     }
 
     suspend fun downloadApk(
+        release: GitHubReleaseInfo,
+        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
+    ): File = downloadApk(
+        downloadUrl = release.apkDownloadUrl,
+        assetFileName = resolveApkFileName(release),
+        expectedSizeBytes = release.apkSizeBytes,
+        onProgress = onProgress
+    )
+
+    suspend fun downloadApk(
         downloadUrl: String,
         assetFileName: String,
         expectedSizeBytes: Long,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
     ): File = withContext(Dispatchers.IO) {
-        val updatesDir = File(context.filesDir, "updates").apply {
+        val updatesDir = File(context.filesDir, UPDATES_DIR_NAME).apply {
             if (!exists()) mkdirs()
         }
 
+        val safeName = sanitizeApkFileName(assetFileName)
+
         // Remove older APKs to keep storage clean
         updatesDir.listFiles()?.forEach { existing ->
-            if (existing.isFile && existing.name != assetFileName) {
+            if (existing.isFile && existing.name != safeName) {
                 existing.delete()
             }
         }
 
-        val safeName = assetFileName.replace(Regex("[^A-Za-z0-9._-]"), "_")
-            .ifBlank { "voice-recorder-update.apk" }
         val finalFile = File(updatesDir, safeName)
+        if (finalFile.isFile &&
+            finalFile.length() > 0L &&
+            (expectedSizeBytes <= 0L || finalFile.length() == expectedSizeBytes) &&
+            isValidUpdateApk(finalFile)
+        ) {
+            onProgress(finalFile.length(), finalFile.length())
+            return@withContext finalFile
+        }
+
         val tempFile = File(updatesDir, "$safeName.tmp")
         if (tempFile.exists()) tempFile.delete()
 
@@ -122,7 +252,7 @@ class GitHubUpdateRepository(private val context: Context) {
             connection = openFollowingRedirects(downloadUrl, acceptHeader = "application/octet-stream")
             val responseCode = connection.responseCode
             if (responseCode !in 200..299) {
-                throw IllegalStateException("Download failed (HTTP $responseCode)")
+                throw IllegalStateException(formatHttpError("Download failed", responseCode, connection))
             }
 
             val headerLength = connection.contentLengthLong
@@ -137,7 +267,7 @@ class GitHubUpdateRepository(private val context: Context) {
 
             connection.inputStream.use { input ->
                 FileOutputStream(tempFile).use { output ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    val buffer = ByteArray(16 * 1024)
                     var lastReportTime = 0L
                     while (true) {
                         currentCoroutineContext().ensureActive()
@@ -156,7 +286,17 @@ class GitHubUpdateRepository(private val context: Context) {
             }
 
             if (downloaded <= 0L || !tempFile.exists() || tempFile.length() <= 0L) {
-                throw IllegalStateException("Downloaded APK file is empty")
+                throw IllegalStateException("Downloaded APK file is empty.")
+            }
+
+            if (expectedSizeBytes > 0L && tempFile.length() != expectedSizeBytes) {
+                throw IllegalStateException("Downloaded APK size mismatch (expected $expectedSizeBytes bytes, got ${tempFile.length()}).")
+            }
+
+            val archiveInfo = getPackageArchiveInfoCompat(tempFile.absolutePath, 0)
+                ?: throw IllegalStateException("Downloaded file is not a valid Android APK package.")
+            if (archiveInfo.packageName != context.packageName) {
+                throw IllegalStateException("Downloaded APK package (${archiveInfo.packageName}) does not match this app.")
             }
 
             if (finalFile.exists()) finalFile.delete()
@@ -170,6 +310,12 @@ class GitHubUpdateRepository(private val context: Context) {
         } catch (ce: CancellationException) {
             tempFile.delete()
             throw ce
+        } catch (e: UnknownHostException) {
+            tempFile.delete()
+            throw IllegalStateException("Internet connection lost while downloading update.", e)
+        } catch (e: SocketTimeoutException) {
+            tempFile.delete()
+            throw IllegalStateException("Download timed out. Please try again.", e)
         } catch (t: Throwable) {
             tempFile.delete()
             throw t
@@ -188,14 +334,13 @@ class GitHubUpdateRepository(private val context: Context) {
                 val json = JSONObject(payload)
                 parseReleaseJson(json)?.let { return it }
             } else if (code != 404) {
-                val errBody = latestConn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                throw IllegalStateException("GitHub API error ($code)${if (errBody.isNotBlank()) ": ${extractApiMessage(errBody)}" else ""}")
+                throw IllegalStateException(formatHttpError("GitHub API error", code, latestConn))
             }
         } finally {
             latestConn.disconnect()
         }
 
-        // Fallback to /releases list (covers prereleases or repositories without a stable tag yet)
+        // Fallback to /releases list (covers prereleases or latest release still uploading assets)
         val listUrl = "https://api.github.com/repos/$repoSlug/releases?per_page=10"
         val listConn = openFollowingRedirects(listUrl, acceptHeader = "application/vnd.github+json")
         try {
@@ -204,8 +349,7 @@ class GitHubUpdateRepository(private val context: Context) {
                 if (code == 404) {
                     throw IllegalStateException("Repository '$repoSlug' or its releases were not found on GitHub.")
                 }
-                val errBody = listConn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                throw IllegalStateException("GitHub API error ($code)${if (errBody.isNotBlank()) ": ${extractApiMessage(errBody)}" else ""}")
+                throw IllegalStateException(formatHttpError("GitHub API error", code, listConn))
             }
             val payload = listConn.inputStream.bufferedReader().use { it.readText() }
             val array = JSONArray(payload)
@@ -220,22 +364,41 @@ class GitHubUpdateRepository(private val context: Context) {
         }
     }
 
+    private fun formatHttpError(prefix: String, code: Int, conn: HttpURLConnection): String {
+        val rateRemaining = conn.getHeaderField("X-RateLimit-Remaining")
+        if ((code == 403 || code == 429) && rateRemaining == "0") {
+            val resetEpochSec = conn.getHeaderField("X-RateLimit-Reset")?.toLongOrNull()
+            val waitMins = resetEpochSec?.let {
+                ((it * 1000L - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1L)
+            }
+            return if (waitMins != null) {
+                "GitHub API rate limit reached. Try again in about $waitMins min."
+            } else {
+                "GitHub API rate limit reached. Please try again later."
+            }
+        }
+        val errBody = conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val msg = extractApiMessage(errBody)
+        return "$prefix ($code)${if (msg.isNotBlank()) ": $msg" else ""}"
+    }
+
     private fun openFollowingRedirects(
         urlString: String,
         acceptHeader: String,
-        maxRedirects: Int = 5
+        maxRedirects: Int = 8
     ): HttpURLConnection {
         var currentUrl = urlString
         var redirects = 0
         while (true) {
-            val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+            val parsedUrl = URL(currentUrl)
+            val conn = (parsedUrl.openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = false
                 connectTimeout = 15_000
                 readTimeout = 30_000
                 requestMethod = "GET"
                 setRequestProperty("Accept", acceptHeader)
-                setRequestProperty("User-Agent", "VoiceRecorder-Android-Updater/1.0")
-                if (acceptHeader.contains("github")) {
+                setRequestProperty("User-Agent", "VoiceRecorder-Android-Updater/1.1")
+                if (parsedUrl.host.equals("api.github.com", ignoreCase = true)) {
                     setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
                 }
             }
@@ -245,9 +408,9 @@ class GitHubUpdateRepository(private val context: Context) {
                 val location = conn.getHeaderField("Location")
                 conn.disconnect()
                 if (location.isNullOrBlank() || redirects >= maxRedirects) {
-                    throw IllegalStateException("Too many redirects while contacting GitHub")
+                    throw IllegalStateException("Too many redirects while contacting GitHub.")
                 }
-                currentUrl = URL(URL(currentUrl), location).toString()
+                currentUrl = URL(parsedUrl, location).toString()
                 redirects++
                 continue
             }
@@ -257,22 +420,91 @@ class GitHubUpdateRepository(private val context: Context) {
 
     private fun extractApiMessage(rawJson: String): String {
         return try {
-            JSONObject(rawJson).optString("message", "").take(120)
+            JSONObject(rawJson).optString("message", "").take(140)
         } catch (_: Exception) {
             ""
         }
     }
 
+    private fun getPackageInfoCompat(packageName: String, flags: Int): PackageInfo? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(flags.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(packageName, flags)
+        }
+    }
+
+    private fun getPackageArchiveInfoCompat(archiveFilePath: String, flags: Int): PackageInfo? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageArchiveInfo(
+                archiveFilePath,
+                PackageManager.PackageInfoFlags.of(flags.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageArchiveInfo(archiveFilePath, flags)
+        }
+    }
+
+    private fun signingFlags(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            @Suppress("DEPRECATION")
+            PackageManager.GET_SIGNATURES
+        }
+    }
+
+    private fun extractSigningCerts(pkgInfo: PackageInfo?): Set<String> {
+        if (pkgInfo == null) return emptySet()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = pkgInfo.signingInfo ?: return emptySet()
+            val signers = if (signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners
+            } else {
+                signingInfo.signingCertificateHistory ?: signingInfo.apkContentsSigners
+            }
+            signers.orEmpty().map { it.toCharsString() }.toSet()
+        } else {
+            @Suppress("DEPRECATION")
+            pkgInfo.signatures.orEmpty().map { it.toCharsString() }.toSet()
+        }
+    }
+
+    private fun resolveApkFileName(release: GitHubReleaseInfo): String {
+        val base = sanitizeApkFileName(release.apkAssetName)
+        return if (base.contains(release.versionName, ignoreCase = true)) {
+            base
+        } else {
+            val tagPrefix = release.tagName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                .ifBlank { release.versionName }
+            "${tagPrefix}_$base"
+        }
+    }
+
+    private fun sanitizeApkFileName(rawName: String): String {
+        return rawName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifBlank { "voice-recorder-update.apk" }
+    }
+
     companion object {
+        private const val UPDATES_DIR_NAME = "updates"
         private val SEMVER_REGEX = Regex("""(\d+(?:\.\d+)+)""")
         private val VERSION_CODE_REGEX = Regex("""versionCode\s*=\s*(\d+)""", RegexOption.IGNORE_CASE)
-        private val REPO_URL_REGEX = Regex("""^(?:https?://github\.com/)?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$""")
+        private val REPO_URL_REGEX = Regex(
+            """^(?:(?:https?://)?(?:www\.)?github\.com/)?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git|/(?:releases|tags|tree|blob|issues|actions).*)?/?$""",
+            RegexOption.IGNORE_CASE
+        )
 
         fun normalizeRepoSlug(raw: String): String? {
             val trimmed = raw.trim()
             if (trimmed.isEmpty()) return null
             val match = REPO_URL_REGEX.matchEntire(trimmed) ?: return null
-            return match.groupValues[1]
+            return match.groupValues[1].removeSuffix(".git")
         }
 
         fun parseReleaseJson(json: JSONObject): GitHubReleaseInfo? {
@@ -289,7 +521,15 @@ class GitHubUpdateRepository(private val context: Context) {
             }
             if (apkAssets.isEmpty()) return null
 
-            val chosenAsset = apkAssets.firstOrNull {
+            val supportedAbis = Build.SUPPORTED_ABIS.orEmpty().toList()
+            val chosenAsset = apkAssets.firstOrNull { asset ->
+                val name = asset.optString("name", "")
+                supportedAbis.any { abi -> name.contains(abi, ignoreCase = true) } &&
+                    name.contains("release", ignoreCase = true)
+            } ?: apkAssets.firstOrNull { asset ->
+                val name = asset.optString("name", "")
+                supportedAbis.any { abi -> name.contains(abi, ignoreCase = true) }
+            } ?: apkAssets.firstOrNull {
                 it.optString("name", "").contains("release", ignoreCase = true)
             } ?: apkAssets.first()
 
@@ -297,6 +537,7 @@ class GitHubUpdateRepository(private val context: Context) {
             val releaseName = json.optString("name", "").trim().ifEmpty { tagName }
             val body = json.optString("body", "").replace("\r\n", "\n").trim()
             val publishedAt = json.optString("published_at", "")
+            val htmlUrl = json.optString("html_url", "").trim()
             val assetName = chosenAsset.optString("name", "update.apk")
             val downloadUrl = chosenAsset.optString("browser_download_url", "")
             val sizeBytes = chosenAsset.optLong("size", -1L)
@@ -314,7 +555,8 @@ class GitHubUpdateRepository(private val context: Context) {
                 publishedAt = publishedAt,
                 apkAssetName = assetName,
                 apkDownloadUrl = downloadUrl,
-                apkSizeBytes = sizeBytes
+                apkSizeBytes = sizeBytes,
+                htmlUrl = htmlUrl
             )
         }
 

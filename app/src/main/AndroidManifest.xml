@@ -45,6 +45,10 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <receiver
+            android:name="com.android.abdullah.voicerecorder.mp3.data.ApkInstallReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

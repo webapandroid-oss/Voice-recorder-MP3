@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,6 +49,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -89,7 +91,8 @@ fun UpdateScreen(
     onInstallNow: () -> Unit,
     onRequestUnknownSourcePermission: () -> Unit,
     onRefreshInstallPermission: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onEditRepo: () -> Unit = {}
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -132,7 +135,8 @@ fun UpdateScreen(
                 },
                 actions = {
                     if (updateState !is UpdateUiState.Checking &&
-                        updateState !is UpdateUiState.Downloading
+                        updateState !is UpdateUiState.Downloading &&
+                        updateState !is UpdateUiState.Installing
                     ) {
                         IconButton(
                             onClick = onCheckAgain,
@@ -162,13 +166,13 @@ fun UpdateScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .widthIn(max = 600.dp)
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 when (updateState) {
                     is UpdateUiState.Idle,
                     is UpdateUiState.Checking -> {
-                        CheckingUpdatesCard()
+                        CheckingUpdatesCard(configuredRepo = configuredRepo)
                     }
 
                     is UpdateUiState.RepoNotConfigured -> {
@@ -181,6 +185,7 @@ fun UpdateScreen(
 
                     is UpdateUiState.UpToDate -> {
                         UpToDateCard(
+                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             latestVersion = updateState.latestVersion,
                             onCheckAgain = onCheckAgain,
@@ -190,6 +195,7 @@ fun UpdateScreen(
 
                     is UpdateUiState.Available -> {
                         ReleaseUpdateContent(
+                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             release = updateState.release,
                             updateState = updateState,
@@ -197,13 +203,13 @@ fun UpdateScreen(
                             onCancelDownload = onCancelDownload,
                             onInstallNow = onInstallNow,
                             onRequestUnknownSourcePermission = onRequestUnknownSourcePermission,
-                            onCheckAgain = onCheckAgain,
                             modifier = Modifier.weight(1f)
                         )
                     }
 
                     is UpdateUiState.Downloading -> {
                         ReleaseUpdateContent(
+                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             release = updateState.release,
                             updateState = updateState,
@@ -211,13 +217,13 @@ fun UpdateScreen(
                             onCancelDownload = onCancelDownload,
                             onInstallNow = onInstallNow,
                             onRequestUnknownSourcePermission = onRequestUnknownSourcePermission,
-                            onCheckAgain = onCheckAgain,
                             modifier = Modifier.weight(1f)
                         )
                     }
 
                     is UpdateUiState.ReadyToInstall -> {
                         ReleaseUpdateContent(
+                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             release = updateState.release,
                             updateState = updateState,
@@ -225,7 +231,20 @@ fun UpdateScreen(
                             onCancelDownload = onCancelDownload,
                             onInstallNow = onInstallNow,
                             onRequestUnknownSourcePermission = onRequestUnknownSourcePermission,
-                            onCheckAgain = onCheckAgain,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    is UpdateUiState.Installing -> {
+                        ReleaseUpdateContent(
+                            configuredRepo = configuredRepo,
+                            currentVersion = updateState.currentVersion,
+                            release = updateState.release,
+                            updateState = updateState,
+                            onDownloadUpdate = onDownloadUpdate,
+                            onCancelDownload = onCancelDownload,
+                            onInstallNow = onInstallNow,
+                            onRequestUnknownSourcePermission = onRequestUnknownSourcePermission,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -233,6 +252,7 @@ fun UpdateScreen(
                     is UpdateUiState.Error -> {
                         if (updateState.release != null) {
                             ReleaseUpdateContent(
+                                configuredRepo = configuredRepo,
                                 currentVersion = updateState.currentVersion,
                                 release = updateState.release,
                                 updateState = updateState,
@@ -240,13 +260,14 @@ fun UpdateScreen(
                                 onCancelDownload = onCancelDownload,
                                 onInstallNow = onInstallNow,
                                 onRequestUnknownSourcePermission = onRequestUnknownSourcePermission,
-                                onCheckAgain = onCheckAgain,
                                 modifier = Modifier.weight(1f)
                             )
                         } else {
                             UpdateErrorCard(
+                                configuredRepo = configuredRepo,
                                 message = updateState.message,
                                 onCheckAgain = onCheckAgain,
+                                onEditRepo = onEditRepo,
                                 onBack = onBack
                             )
                         }
@@ -258,7 +279,7 @@ fun UpdateScreen(
 }
 
 @Composable
-private fun CheckingUpdatesCard() {
+private fun CheckingUpdatesCard(configuredRepo: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -271,7 +292,7 @@ private fun CheckingUpdatesCard() {
                 .fillMaxWidth()
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             CircularProgressIndicator(
                 color = CyanAccent,
@@ -282,6 +303,15 @@ private fun CheckingUpdatesCard() {
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
+            if (configuredRepo.isNotBlank()) {
+                Text(
+                    text = configuredRepo,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
@@ -362,6 +392,7 @@ private fun RepoConfigurationCard(
 
 @Composable
 private fun UpToDateCard(
+    configuredRepo: String,
     currentVersion: String,
     latestVersion: String?,
     onCheckAgain: () -> Unit,
@@ -412,6 +443,15 @@ private fun UpToDateCard(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                 )
             }
+            if (configuredRepo.isNotBlank()) {
+                Text(
+                    text = configuredRepo,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -440,8 +480,10 @@ private fun UpToDateCard(
 
 @Composable
 private fun UpdateErrorCard(
+    configuredRepo: String,
     message: String,
     onCheckAgain: () -> Unit,
+    onEditRepo: () -> Unit,
     onBack: () -> Unit
 ) {
     Card(
@@ -456,13 +498,20 @@ private fun UpdateErrorCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
                 text = "Could not check updates",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.error
             )
+            if (configuredRepo.isNotBlank()) {
+                Text(
+                    text = configuredRepo,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,
@@ -489,12 +538,21 @@ private fun UpdateErrorCard(
                     Text(stringResource(R.string.update_retry_button))
                 }
             }
+            TextButton(
+                onClick = onEditRepo,
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .testTag("update_change_repo_button")
+            ) {
+                Text(stringResource(R.string.update_change_repo))
+            }
         }
     }
 }
 
 @Composable
 private fun ReleaseUpdateContent(
+    configuredRepo: String,
     currentVersion: String,
     release: GitHubReleaseInfo,
     updateState: UpdateUiState,
@@ -502,12 +560,11 @@ private fun ReleaseUpdateContent(
     onCancelDownload: () -> Unit,
     onInstallNow: () -> Unit,
     onRequestUnknownSourcePermission: () -> Unit,
-    onCheckAgain: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Hero release header card
         Card(
@@ -528,9 +585,9 @@ private fun ReleaseUpdateContent(
                             )
                         )
                     )
-                    .padding(20.dp)
+                    .padding(16.dp)
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -613,6 +670,15 @@ private fun ReleaseUpdateContent(
                             )
                         }
                     }
+                    if (configuredRepo.isNotBlank()) {
+                        Text(
+                            text = "$configuredRepo • ${release.apkAssetName}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -630,8 +696,8 @@ private fun ReleaseUpdateContent(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -781,6 +847,38 @@ private fun ReleaseUpdateContent(
             }
         }
 
+        // Signing certificate mismatch hint (e.g. debug build -> release APK)
+        AnimatedVisibility(
+            visible = updateState is UpdateUiState.ReadyToInstall &&
+                updateState.signatureMismatch
+        ) {
+            Surface(
+                color = AmberMeter.copy(alpha = 0.14f),
+                shape = MaterialTheme.shapes.medium,
+                border = BorderStroke(1.dp, AmberMeter.copy(alpha = 0.45f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("update_signature_mismatch_banner")
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.WarningAmber,
+                        contentDescription = null,
+                        tint = AmberMeter
+                    )
+                    Text(
+                        text = stringResource(R.string.update_signature_mismatch_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+
         // Inline error message if download failed
         if (updateState is UpdateUiState.Error) {
             Text(
@@ -867,6 +965,28 @@ private fun ReleaseUpdateContent(
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
+                    }
+                }
+
+                is UpdateUiState.Installing -> {
+                    Button(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp)
+                            .testTag("update_primary_action_button")
+                    ) {
+                        CircularProgressIndicator(
+                            color = CyanAccent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = stringResource(R.string.update_installing_button),
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
 

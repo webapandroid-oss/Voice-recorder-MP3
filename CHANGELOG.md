@@ -2,6 +2,17 @@
 
 All notable changes to Voice Recorder will be documented in this file.
 
+## [1.0.3] - 2026-11-25 (Version Code 4)
+
+### Added
+- Pre-configured default GitHub Releases repository (`webapandroid-oss/Voice-recorder-MP3`) with support for full GitHub repository URLs.
+- In-app `PackageInstaller` session installation (`ApkInstallReceiver`) with automatic install launch after download and after granting Unknown Sources permission.
+- APK package integrity, signing certificate compatibility, and local cached APK reuse checks prior to installation.
+
+### Changed
+- Kept the entire update download and installation workflow inside the app with no external browser redirection.
+- Bumped `versionName` to `1.0.3` and `versionCode` to `4`.
+
 ## [1.0.2] - 2026-11-25 (Version Code 3)
 
 ### Added

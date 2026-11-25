@@ -27,7 +27,7 @@
     <string name="notification_channel_desc">Shows ongoing MP3 voice recording status</string>
     <string name="notification_recording_title">Recording MP3 Audio</string>
     <string name="notification_paused_title">MP3 Recording Paused</string>
-    <string name="github_repo" translatable="false"></string>
+    <string name="github_repo" translatable="false">webapandroid-oss/Voice-recorder-MP3</string>
     <string name="action_check_updates">Check for Updates</string>
     <string name="update_screen_title">App Update</string>
     <string name="update_available_badge">UPDATE AVAILABLE</string>
@@ -38,13 +38,17 @@
     <string name="update_no_notes">No release notes provided.</string>
     <string name="update_download_button">Download Update</string>
     <string name="update_downloading_button">Downloading…</string>
+    <string name="update_installing_button">Installing Update…</string>
     <string name="update_install_now_button">Install Now</string>
     <string name="update_allow_unknown_button">Allow Unknown App Permission</string>
     <string name="update_cancel_download">Cancel</string>
     <string name="update_later_button">Later</string>
     <string name="update_retry_button">Check Again</string>
-    <string name="update_permission_hint">Allow Voice Recorder to install unknown apps in system settings, then tap Install Now.</string>
+    <string name="update_open_github">Open on GitHub</string>
+    <string name="update_change_repo">Change Repository</string>
+    <string name="update_permission_hint">Allow Voice Recorder to install unknown apps in system settings, then return to continue installing.</string>
+    <string name="update_signature_mismatch_hint">This APK uses a different signing key than the currently installed build. If installation fails, uninstall the current app first and install the downloaded release.</string>
     <string name="update_repo_label">GitHub Repository (owner/repo)</string>
-    <string name="update_repo_hint">Set owner/repo to fetch releases from GitHub.</string>
+    <string name="update_repo_hint">Set owner/repo or a GitHub URL to fetch releases from GitHub.</string>
     <string name="update_save_repo">Save &amp; Check</string>
 </resources>

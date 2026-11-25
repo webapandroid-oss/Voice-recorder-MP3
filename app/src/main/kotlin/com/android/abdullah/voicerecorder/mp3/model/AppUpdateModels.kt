@@ -9,7 +9,8 @@ data class GitHubReleaseInfo(
     val publishedAt: String,
     val apkAssetName: String,
     val apkDownloadUrl: String,
-    val apkSizeBytes: Long
+    val apkSizeBytes: Long,
+    val htmlUrl: String = ""
 )
 
 sealed interface UpdateUiState {
@@ -45,7 +46,14 @@ sealed interface UpdateUiState {
         val currentVersion: String,
         val release: GitHubReleaseInfo,
         val apkFilePath: String,
-        val needsUnknownSourcePermission: Boolean
+        val needsUnknownSourcePermission: Boolean,
+        val signatureMismatch: Boolean = false
+    ) : UpdateUiState
+
+    data class Installing(
+        val currentVersion: String,
+        val release: GitHubReleaseInfo,
+        val apkFilePath: String
     ) : UpdateUiState
 
     data class Error(

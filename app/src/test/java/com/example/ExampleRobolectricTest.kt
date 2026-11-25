@@ -48,9 +48,9 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `app version is 1_0_2 with versionCode 3`() {
-        assertEquals(3, BuildConfig.VERSION_CODE)
-        assertEquals("1.0.2", BuildConfig.VERSION_NAME)
+    fun `app version is 1_0_3 with versionCode 4`() {
+        assertEquals(4, BuildConfig.VERSION_CODE)
+        assertEquals("1.0.3", BuildConfig.VERSION_NAME)
     }
 
     @Test
@@ -205,5 +205,31 @@ class ExampleRobolectricTest {
 
         uiState.value = UpdateUiState.ReadyToInstall("1.0.2", sampleRelease, "/tmp/app.apk", needsUnknownSourcePermission = false)
         composeRule.onNodeWithText("Install Now").assertIsDisplayed()
+
+        uiState.value = UpdateUiState.Installing("1.0.2", sampleRelease, "/tmp/app.apk")
+        composeRule.onNodeWithText("Installing Update…").assertIsDisplayed()
+    }
+
+    @Test
+    fun `default github repo resource and url normalization handle webapandroid-oss repo`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assertEquals("webapandroid-oss/Voice-recorder-MP3", context.getString(R.string.github_repo))
+
+        assertEquals(
+            "webapandroid-oss/Voice-recorder-MP3",
+            GitHubUpdateRepository.normalizeRepoSlug("github.com/webapandroid-oss/Voice-recorder-MP3")
+        )
+        assertEquals(
+            "webapandroid-oss/Voice-recorder-MP3",
+            GitHubUpdateRepository.normalizeRepoSlug("https://github.com/webapandroid-oss/Voice-recorder-MP3")
+        )
+        assertEquals(
+            "webapandroid-oss/Voice-recorder-MP3",
+            GitHubUpdateRepository.normalizeRepoSlug("https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/latest")
+        )
+        assertEquals(
+            "webapandroid-oss/Voice-recorder-MP3",
+            GitHubUpdateRepository.normalizeRepoSlug("webapandroid-oss/Voice-recorder-MP3")
+        )
     }
 }

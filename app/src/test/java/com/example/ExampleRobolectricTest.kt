@@ -6,11 +6,13 @@ import android.content.pm.PackageManager
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.android.abdullah.voicerecorder.mp3.data.RecordingsRepository
 import com.android.abdullah.voicerecorder.mp3.model.RecorderStatus
-import com.android.abdullah.voicerecorder.mp3.model.RecordingQualityConfig
 import com.android.abdullah.voicerecorder.mp3.service.LiveRecordingState
+import com.android.abdullah.voicerecorder.mp3.ui.VoiceRecorderApp
 import com.android.abdullah.voicerecorder.mp3.ui.screens.RecordScreen
 import com.android.abdullah.voicerecorder.mp3.ui.theme.VoiceRecorderTheme
 import org.junit.Assert.assertEquals
@@ -34,6 +36,12 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
         assertEquals("Voice Recorder", appName)
+    }
+
+    @Test
+    fun `app version is 1_0_1 with versionCode 2`() {
+        assertEquals(2, BuildConfig.VERSION_CODE)
+        assertEquals("1.0.1", BuildConfig.VERSION_NAME)
     }
 
     @Test
@@ -62,24 +70,38 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `record screen renders bottom primary button and stop button when recording`() {
+    fun `record screen is minimal and renders material transport buttons when recording`() {
         composeRule.setContent {
             VoiceRecorderTheme {
                 RecordScreen(
                     liveState = LiveRecordingState(status = RecorderStatus.RECORDING),
-                    qualityConfig = RecordingQualityConfig(),
                     draftTitle = "",
                     onDraftTitleChange = {},
                     onStartRecording = {},
                     onPauseRecording = {},
                     onResumeRecording = {},
                     onStopAndSave = {},
-                    onDiscard = {},
-                    onOpenQualitySettings = {}
+                    onDiscard = {}
                 )
             }
         }
         composeRule.onNodeWithTag("primary_record_button").assertIsDisplayed()
         composeRule.onNodeWithTag("stop_save_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("discard_recording_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("quality_pill_button").assertDoesNotExist()
+        composeRule.onNodeWithText("libffmpeg.so", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `top right more options menu opens quality settings bottom sheet`() {
+        composeRule.setContent {
+            VoiceRecorderTheme {
+                VoiceRecorderApp()
+            }
+        }
+
+        composeRule.onNodeWithTag("more_options_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("menu_quality_settings").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("bitrate_192").assertIsDisplayed()
     }
 }

@@ -2,7 +2,6 @@ package com.android.abdullah.voicerecorder.mp3.ui
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -14,11 +13,14 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,7 +42,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -53,11 +54,6 @@ import com.android.abdullah.voicerecorder.mp3.model.RecorderStatus
 import com.android.abdullah.voicerecorder.mp3.ui.components.QualitySettingsSheet
 import com.android.abdullah.voicerecorder.mp3.ui.screens.LibraryScreen
 import com.android.abdullah.voicerecorder.mp3.ui.screens.RecordScreen
-import com.android.abdullah.voicerecorder.mp3.ui.theme.CoralRecord
-import com.android.abdullah.voicerecorder.mp3.ui.theme.CoralRecordContainer
-import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioObsidian
-import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioOutlineSubtle
-import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioSurface
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +71,7 @@ fun VoiceRecorderApp(
     val isConvertingMp3 by viewModel.isConvertingMp3.collectAsStateWithLifecycle()
 
     var currentDestination by rememberSaveable { mutableStateOf(MainDestination.RECORD) }
+    var moreMenuExpanded by remember { mutableStateOf(false) }
     var showQualitySheet by rememberSaveable { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -92,7 +89,6 @@ fun VoiceRecorderApp(
         }
     }
 
-    // Handle system back on Library tab -> return to Record Studio
     BackHandler(enabled = currentDestination == MainDestination.LIBRARY) {
         currentDestination = MainDestination.RECORD
     }
@@ -102,40 +98,53 @@ fun VoiceRecorderApp(
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            containerColor = StudioObsidian,
+            containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = WindowInsets.safeDrawing,
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             topBar = {
                 TopAppBar(
                     title = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.headlineMedium
-                            )
-                            Text(
-                                text = "MP3",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = CoralRecord
-                            )
-                        }
+                        Text(
+                            text = stringResource(R.string.app_name),
+                            style = MaterialTheme.typography.titleLarge
+                        )
                     },
                     actions = {
-                        IconButton(
-                            onClick = { showQualitySheet = true },
-                            modifier = Modifier.testTag("top_settings_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Tune,
-                                contentDescription = stringResource(R.string.action_settings)
-                            )
+                        Box {
+                            IconButton(
+                                onClick = { moreMenuExpanded = true },
+                                modifier = Modifier.testTag("more_options_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.MoreVert,
+                                    contentDescription = stringResource(R.string.action_more_options)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = moreMenuExpanded,
+                                onDismissRequest = { moreMenuExpanded = false },
+                                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                modifier = Modifier.testTag("more_options_menu")
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_settings)) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Tune,
+                                            contentDescription = null
+                                        )
+                                    },
+                                    onClick = {
+                                        moreMenuExpanded = false
+                                        showQualitySheet = true
+                                    },
+                                    modifier = Modifier.testTag("menu_quality_settings")
+                                )
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = StudioObsidian,
+                        containerColor = MaterialTheme.colorScheme.background,
                         titleContentColor = MaterialTheme.colorScheme.onBackground
                     )
                 )
@@ -143,7 +152,7 @@ fun VoiceRecorderApp(
             bottomBar = {
                 if (!isExpandedLayout) {
                     NavigationBar(
-                        containerColor = StudioSurface,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                         tonalElevation = 0.dp
                     ) {
                         NavigationBarItem(
@@ -161,9 +170,9 @@ fun VoiceRecorderApp(
                             },
                             label = { Text(stringResource(R.string.tab_record)) },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = CoralRecord,
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
                                 selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                                indicatorColor = CoralRecordContainer
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer
                             ),
                             modifier = Modifier.testTag("nav_record_tab")
                         )
@@ -176,7 +185,7 @@ fun VoiceRecorderApp(
                                     badge = {
                                         if (recordings.isNotEmpty()) {
                                             Badge(
-                                                containerColor = CoralRecord,
+                                                containerColor = MaterialTheme.colorScheme.primary,
                                                 contentColor = MaterialTheme.colorScheme.onPrimary
                                             ) {
                                                 Text(recordings.size.toString())
@@ -196,9 +205,9 @@ fun VoiceRecorderApp(
                             },
                             label = { Text(stringResource(R.string.tab_library)) },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = CoralRecord,
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
                                 selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                                indicatorColor = CoralRecordContainer
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer
                             ),
                             modifier = Modifier.testTag("nav_library_tab")
                         )
@@ -207,7 +216,6 @@ fun VoiceRecorderApp(
             }
         ) { innerPadding ->
             if (isExpandedLayout) {
-                // Canonical Tablet / Foldable 2-pane studio + library layout
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
@@ -220,21 +228,19 @@ fun VoiceRecorderApp(
                     ) {
                         RecordScreen(
                             liveState = liveRecordingState,
-                            qualityConfig = qualityConfig,
                             draftTitle = draftTitle,
                             onDraftTitleChange = viewModel::updateDraftTitle,
                             onStartRecording = viewModel::startRecording,
                             onPauseRecording = viewModel::pauseRecording,
                             onResumeRecording = viewModel::resumeRecording,
                             onStopAndSave = viewModel::stopAndSaveRecording,
-                            onDiscard = viewModel::discardRecording,
-                            onOpenQualitySettings = { showQualitySheet = true }
+                            onDiscard = viewModel::discardRecording
                         )
                     }
 
                     VerticalDivider(
                         thickness = 1.dp,
-                        color = StudioOutlineSubtle
+                        color = MaterialTheme.colorScheme.outlineVariant
                     )
 
                     Box(
@@ -258,7 +264,7 @@ fun VoiceRecorderApp(
                             onShare = { rec ->
                                 viewModel.buildShareIntent(rec)?.let { shareIntent ->
                                     context.startActivity(
-                                        Intent.createChooser(shareIntent, "Share MP3 Recording")
+                                        Intent.createChooser(shareIntent, "Share")
                                     )
                                 }
                             },
@@ -278,15 +284,13 @@ fun VoiceRecorderApp(
                         MainDestination.RECORD -> {
                             RecordScreen(
                                 liveState = liveRecordingState,
-                                qualityConfig = qualityConfig,
                                 draftTitle = draftTitle,
                                 onDraftTitleChange = viewModel::updateDraftTitle,
                                 onStartRecording = viewModel::startRecording,
                                 onPauseRecording = viewModel::pauseRecording,
                                 onResumeRecording = viewModel::resumeRecording,
                                 onStopAndSave = viewModel::stopAndSaveRecording,
-                                onDiscard = viewModel::discardRecording,
-                                onOpenQualitySettings = { showQualitySheet = true }
+                                onDiscard = viewModel::discardRecording
                             )
                         }
                         MainDestination.LIBRARY -> {
@@ -306,7 +310,7 @@ fun VoiceRecorderApp(
                                 onShare = { rec ->
                                     viewModel.buildShareIntent(rec)?.let { shareIntent ->
                                         context.startActivity(
-                                            Intent.createChooser(shareIntent, "Share MP3 Recording")
+                                            Intent.createChooser(shareIntent, "Share")
                                         )
                                     }
                                 },

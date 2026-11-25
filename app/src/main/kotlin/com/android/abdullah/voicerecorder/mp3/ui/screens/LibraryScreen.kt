@@ -5,9 +5,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,8 +21,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forward10
@@ -34,29 +29,34 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.SwapHoriz
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -66,10 +66,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -78,14 +75,6 @@ import com.android.abdullah.voicerecorder.mp3.R
 import com.android.abdullah.voicerecorder.mp3.model.Mp3Recording
 import com.android.abdullah.voicerecorder.mp3.model.PlaybackState
 import com.android.abdullah.voicerecorder.mp3.model.SortOrder
-import com.android.abdullah.voicerecorder.mp3.ui.theme.CoralRecord
-import com.android.abdullah.voicerecorder.mp3.ui.theme.CoralRecordContainer
-import com.android.abdullah.voicerecorder.mp3.ui.theme.CyanAccent
-import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioOutline
-import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioOutlineSubtle
-import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioSurface
-import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioSurfaceElevated
-import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioSurfaceHigh
 import com.android.abdullah.voicerecorder.mp3.util.FormatUtils
 
 @Composable
@@ -126,7 +115,6 @@ fun LibraryScreen(
         ) {
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Search bar
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchQueryChange,
@@ -141,7 +129,7 @@ fun LibraryScreen(
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Filled.Search,
-                        contentDescription = "Search recordings",
+                        contentDescription = stringResource(R.string.search_placeholder),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 },
@@ -150,24 +138,23 @@ fun LibraryScreen(
                         IconButton(onClick = { onSearchQueryChange("") }) {
                             Icon(
                                 imageVector = Icons.Filled.Close,
-                                contentDescription = "Clear search"
+                                contentDescription = "Clear"
                             )
                         }
                     }
                 },
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.medium,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = CoralRecord,
-                    unfocusedBorderColor = StudioOutline,
-                    focusedContainerColor = StudioSurface,
-                    unfocusedContainerColor = StudioSurface
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("library_search_input")
             )
 
-            // Sort chips + Convert to MP3 action
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -189,7 +176,7 @@ fun LibraryScreen(
                                 )
                             },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = CoralRecordContainer,
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                 selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                             ),
                             modifier = Modifier.testTag("sort_${order.name.lowercase()}")
@@ -197,7 +184,7 @@ fun LibraryScreen(
                     }
                 }
                 if (onConvertToMp3 != null) {
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = onConvertToMp3,
                         enabled = !isConvertingMp3,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
@@ -206,19 +193,18 @@ fun LibraryScreen(
                         if (isConvertingMp3) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = CoralRecord
+                                strokeWidth = 2.dp
                             )
                         } else {
                             Icon(
                                 imageVector = Icons.Outlined.SwapHoriz,
-                                contentDescription = "Convert audio to MP3",
+                                contentDescription = "Convert",
                                 modifier = Modifier.size(18.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isConvertingMp3) "Converting…" else "Convert MP3",
+                            text = if (isConvertingMp3) "…" else "MP3",
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
@@ -237,7 +223,7 @@ fun LibraryScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
                     items(
@@ -278,14 +264,15 @@ fun LibraryScreen(
     recordingToDelete?.let { target ->
         AlertDialog(
             onDismissRequest = { recordingToDelete = null },
-            containerColor = StudioSurfaceElevated,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
             title = {
-                Text("Delete MP3 Recording?", style = MaterialTheme.typography.titleLarge)
+                Text("Delete?", style = MaterialTheme.typography.titleLarge)
             },
             text = {
                 Text(
-                    "\"${target.fileName}\" will be permanently removed from Voice Recorder.",
-                    style = MaterialTheme.typography.bodyLarge
+                    text = target.fileName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             },
             confirmButton = {
@@ -294,7 +281,9 @@ fun LibraryScreen(
                         onDelete(target)
                         recordingToDelete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = CoralRecord),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
                     modifier = Modifier.testTag("confirm_delete_button")
                 ) {
                     Text("Delete")
@@ -325,12 +314,14 @@ private fun RecordingItemCard(
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = if (isActive) StudioSurfaceElevated else StudioSurface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (isActive) CoralRecord.copy(alpha = 0.55f) else StudioOutlineSubtle
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = if (isActive) {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerLow
+            }
         ),
         modifier = Modifier
             .fillMaxWidth()
@@ -345,67 +336,48 @@ private fun RecordingItemCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Play / Pause circle button
-                Surface(
-                    onClick = onTogglePlay,
-                    shape = CircleShape,
-                    color = if (isActive && playbackState.isPlaying) CoralRecord else StudioSurfaceHigh,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("play_button_${recording.fileName}")
-                ) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                if (isActive && playbackState.isPlaying) {
+                    FilledIconButton(
+                        onClick = onTogglePlay,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("play_button_${recording.fileName}")
+                    ) {
                         Icon(
-                            imageVector = if (isActive && playbackState.isPlaying) {
-                                Icons.Filled.Pause
-                            } else {
-                                Icons.Filled.PlayArrow
-                            },
-                            contentDescription = if (isActive && playbackState.isPlaying) {
-                                "Pause ${recording.displayName}"
-                            } else {
-                                "Play ${recording.displayName}"
-                            },
-                            tint = MaterialTheme.colorScheme.onSurface
+                            imageVector = Icons.Filled.Pause,
+                            contentDescription = "Pause ${recording.displayName}"
+                        )
+                    }
+                } else {
+                    FilledTonalIconButton(
+                        onClick = onTogglePlay,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("play_button_${recording.fileName}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = "Play ${recording.displayName}"
                         )
                     }
                 }
 
-                // Title & metadata
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = recording.displayName,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = CoralRecordContainer
-                        ) {
-                            Text(
-                                text = if (recording.bitrateKbps != null) {
-                                    "MP3 ${recording.bitrateKbps}k"
-                                } else {
-                                    "MP3"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-
                     Text(
-                        text = "${FormatUtils.formatDuration(recording.durationMs)} · ${FormatUtils.formatFileSize(recording.sizeBytes)} · ${FormatUtils.formatDateTime(recording.createdAtMillis)}",
+                        text = recording.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${FormatUtils.formatDuration(recording.durationMs)} · ${FormatUtils.formatFileSize(recording.sizeBytes)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -413,7 +385,6 @@ private fun RecordingItemCard(
                     )
                 }
 
-                // Overflow menu
                 Box {
                     IconButton(
                         onClick = { menuExpanded = true },
@@ -421,13 +392,13 @@ private fun RecordingItemCard(
                     ) {
                         Icon(
                             imageVector = Icons.Filled.MoreVert,
-                            contentDescription = "Recording options"
+                            contentDescription = stringResource(R.string.action_more_options)
                         )
                     }
                     DropdownMenu(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false },
-                        containerColor = StudioSurfaceElevated
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
                     ) {
                         DropdownMenuItem(
                             text = { Text("Rename") },
@@ -440,7 +411,7 @@ private fun RecordingItemCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Share MP3") },
+                            text = { Text("Share") },
                             leadingIcon = {
                                 Icon(Icons.Outlined.Share, contentDescription = null)
                             },
@@ -450,7 +421,7 @@ private fun RecordingItemCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Save to Music") },
+                            text = { Text("Save") },
                             leadingIcon = {
                                 Icon(Icons.Outlined.FileDownload, contentDescription = null)
                             },
@@ -460,12 +431,12 @@ private fun RecordingItemCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Delete", color = CoralRecord) },
+                            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                             leadingIcon = {
                                 Icon(
                                     Icons.Outlined.Delete,
                                     contentDescription = null,
-                                    tint = CoralRecord
+                                    tint = MaterialTheme.colorScheme.error
                                 )
                             },
                             onClick = {
@@ -477,7 +448,6 @@ private fun RecordingItemCard(
                 }
             }
 
-            // Expandable Inline MP3 Player Controls
             AnimatedVisibility(
                 visible = isActive,
                 enter = fadeIn() + expandVertically(),
@@ -498,9 +468,9 @@ private fun RecordingItemCard(
                             onSeekTo((fraction * totalMs).toLong())
                         },
                         colors = SliderDefaults.colors(
-                            thumbColor = CoralRecord,
-                            activeTrackColor = CoralRecord,
-                            inactiveTrackColor = StudioOutline
+                            thumbColor = MaterialTheme.colorScheme.primary,
+                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                            inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -515,7 +485,7 @@ private fun RecordingItemCard(
                         Text(
                             text = FormatUtils.formatDuration(playbackState.positionMs),
                             style = MaterialTheme.typography.labelSmall,
-                            color = CyanAccent
+                            color = MaterialTheme.colorScheme.secondary
                         )
 
                         Row(
@@ -528,21 +498,18 @@ private fun RecordingItemCard(
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.Replay10,
-                                    contentDescription = "Rewind 10 seconds"
+                                    contentDescription = "Rewind 10s"
                                 )
                             }
 
-                            Surface(
+                            FilledTonalButton(
                                 onClick = onCycleSpeed,
-                                shape = RoundedCornerShape(8.dp),
-                                color = StudioSurfaceHigh,
-                                border = BorderStroke(1.dp, StudioOutline),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 modifier = Modifier.testTag("speed_button")
                             ) {
                                 Text(
                                     text = "${playbackState.speed}x",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    style = MaterialTheme.typography.labelMedium
                                 )
                             }
 
@@ -552,7 +519,7 @@ private fun RecordingItemCard(
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.Forward10,
-                                    contentDescription = "Forward 10 seconds"
+                                    contentDescription = "Forward 10s"
                                 )
                             }
                         }
@@ -584,33 +551,22 @@ private fun EmptyLibraryState(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (!hasSearchFilter) {
-            Image(
-                painter = painterResource(id = R.drawable.img_empty_recordings_1795425772133),
-                contentDescription = "Studio microphone illustration",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth(0.76f)
-                    .height(170.dp)
-                    .clip(RoundedCornerShape(24.dp))
+            Icon(
+                imageVector = Icons.Outlined.GraphicEq,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(56.dp)
             )
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = stringResource(R.string.empty_library_title),
                 style = MaterialTheme.typography.titleLarge,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = stringResource(R.string.empty_library_subtitle),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
             if (onGoToRecord != null) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
                     onClick = onGoToRecord,
-                    colors = ButtonDefaults.buttonColors(containerColor = CoralRecord),
                     modifier = Modifier.testTag("empty_go_record_button")
                 ) {
                     Icon(
@@ -619,24 +575,24 @@ private fun EmptyLibraryState(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Record First MP3")
+                    Text(stringResource(R.string.tab_record))
                 }
             }
         } else {
             Icon(
-                imageVector = Icons.Outlined.SwapHoriz,
+                imageVector = Icons.Filled.Search,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(48.dp)
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "No matching MP3 files",
+                text = "No results",
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(modifier = Modifier.height(6.dp))
             TextButton(onClick = onClearSearch) {
-                Text("Clear search")
+                Text("Clear")
             }
         }
     }
@@ -652,9 +608,9 @@ private fun RenameRecordingDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = StudioSurfaceElevated,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         title = {
-            Text("Rename MP3 File", style = MaterialTheme.typography.titleLarge)
+            Text("Rename", style = MaterialTheme.typography.titleLarge)
         },
         text = {
             OutlinedTextField(
@@ -665,12 +621,12 @@ private fun RenameRecordingDialog(
                     Text(
                         text = ".mp3",
                         style = MaterialTheme.typography.labelMedium,
-                        color = CoralRecord
+                        color = MaterialTheme.colorScheme.primary
                     )
                 },
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = CoralRecord,
-                    unfocusedBorderColor = StudioOutline
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -681,7 +637,6 @@ private fun RenameRecordingDialog(
             Button(
                 onClick = { onConfirm(nameInput) },
                 enabled = nameInput.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = CoralRecord),
                 modifier = Modifier.testTag("confirm_rename_button")
             ) {
                 Text("Save")

@@ -25,6 +25,11 @@ on:
           - published
           - prerelease
           - draft
+      release_notes:
+        description: "Optional extra release notes (prepended to changelog)"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -41,6 +46,7 @@ jobs:
     outputs:
       kotlin_version: ${{ steps.meta.outputs.kotlin_version }}
       version_name: ${{ steps.meta.outputs.version_name }}
+      version_code: ${{ steps.meta.outputs.version_code }}
 
     steps:
       - name: Checkout repository
@@ -96,8 +102,11 @@ jobs:
           KOTLIN_VER="${KOTLIN_VER:-2.4.21}"
           VERSION_NAME="$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/' || true)"
           VERSION_NAME="${VERSION_NAME:-1.0}"
+          VERSION_CODE="$(grep -m1 'versionCode' app/build.gradle.kts | sed -E 's/[^0-9]*([0-9]+).*/\1/' || true)"
+          VERSION_CODE="${VERSION_CODE:-1}"
           echo "kotlin_version=$KOTLIN_VER" >> "$GITHUB_OUTPUT"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
       - name: Cache Kotlin Compiler
         id: cache-kotlinc
@@ -153,7 +162,7 @@ jobs:
             --manifest build/deps/AndroidManifest.xml \
             --min-sdk-version 24 \
             --target-sdk-version 36 \
-            --version-code 1 \
+            --version-code "${{ steps.meta.outputs.version_code }}" \
             --version-name "${{ steps.meta.outputs.version_name }}" \
             --auto-add-overlay \
             --extra-packages "$EXTRA_PKGS" \
@@ -340,7 +349,7 @@ jobs:
             --manifest build/deps/AndroidManifest.xml \
             --min-sdk-version 24 \
             --target-sdk-version 36 \
-            --version-code 1 \
+            --version-code "${{ needs.compile-kotlin-dex.outputs.version_code }}" \
             --version-name "${{ needs.compile-kotlin-dex.outputs.version_name }}" \
             --auto-add-overlay \
             --extra-packages "$EXTRA_PKGS" \
@@ -366,6 +375,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup JDK 21
         uses: actions/setup-java@v5
@@ -490,6 +501,68 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Generate Release Changelog
+        id: changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_NAME: ${{ needs.compile-kotlin-dex.outputs.version_name }}
+          VERSION_CODE: ${{ needs.compile-kotlin-dex.outputs.version_code }}
+          INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          mkdir -p build
+          NOTES_FILE="build/release_notes.md"
+          APK_FILE="$(ls -1 release_apks/*.apk | head -n 1)"
+          APK_BASENAME="$(basename "$APK_FILE")"
+
+          {
+            echo "## Voice Recorder v${VERSION_NAME} (Code ${VERSION_CODE})"
+            echo ""
+            if [ -n "${INPUT_RELEASE_NOTES// /}" ]; then
+              echo "${INPUT_RELEASE_NOTES}"
+              echo ""
+            fi
+
+            if [ -f "CHANGELOG.md" ]; then
+              SECTION="$(awk -v ver="$VERSION_NAME" '
+                BEGIN { in_section = 0 }
+                /^## \[/ {
+                  if (in_section) exit
+                  if (index($0, "[" ver "]") > 0) {
+                    in_section = 1
+                    next
+                  }
+                }
+                in_section { print }
+              ' CHANGELOG.md)"
+              if [ -n "${SECTION// /}" ]; then
+                echo "### Changelog"
+                echo "$SECTION"
+                echo ""
+              fi
+            fi
+
+            PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
+            if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+              COMMITS="$(git log "${PREV_TAG}..HEAD" --no-merges --pretty=format:"- %s (%h)" -n 30 || true)"
+            else
+              COMMITS="$(git log --no-merges --pretty=format:"- %s (%h)" -n 20 || true)"
+            fi
+
+            if [ -n "${COMMITS// /}" ]; then
+              echo "### Commits"
+              echo "$COMMITS"
+              echo ""
+            fi
+
+            echo "### Build Info"
+            echo "- **Version:** ${VERSION_NAME} (\`versionCode=${VERSION_CODE}\`)"
+            echo "- **APK:** \`${APK_BASENAME}\`"
+            echo "- **Build:** #${{ github.run_number }} (\`${{ github.sha }}\`)"
+          } > "$NOTES_FILE"
+
+          cat "$NOTES_FILE"
+          cat "$NOTES_FILE" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish Signed APK to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -503,22 +576,23 @@ jobs:
           TAG="${CLEAN_TAG:-v${VERSION_NAME}-build.${{ github.run_number }}}"
           NAME="${CLEAN_NAME:-Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})}"
           APK_FILE="$(ls -1 release_apks/*.apk | head -n 1)"
+          NOTES_FILE="build/release_notes.md"
 
           publish_release() {
             if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release upload "$TAG" "$APK_FILE" --clobber
+              gh release upload "$TAG" "$APK_FILE" --clobber && \
+                gh release edit "$TAG" --title "$NAME" --notes-file "$NOTES_FILE"
               return $?
             fi
 
-            FLAGS=(--title "$NAME" --target "${{ github.sha }}")
+            FLAGS=(--title "$NAME" --target "${{ github.sha }}" --notes-file "$NOTES_FILE")
             if [ "$INPUT_RELEASE_MODE" = "draft" ]; then
               FLAGS+=(--draft)
             elif [ "$INPUT_RELEASE_MODE" = "prerelease" ]; then
               FLAGS+=(--prerelease)
             fi
 
-            gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --generate-notes || \
-              gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --notes "Automated APK build #${{ github.run_number }} (${{ github.sha }})"
+            gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}"
           }
 
           if ! OUTPUT="$(publish_release 2>&1)"; then

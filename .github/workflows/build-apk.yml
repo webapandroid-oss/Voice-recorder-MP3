@@ -154,6 +154,24 @@ jobs:
             idx=$((idx + 1))
           done < build/deps/res_dirs.txt
 
+          python3 -c '
+import os, re
+from pathlib import Path
+from xml.sax.saxutils import escape
+repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+if repo:
+    p = Path("app/src/main/res/values/strings.xml")
+    text = p.read_text(encoding="utf-8")
+    text = re.sub(
+        r"(<string\s+name=\"github_repo\"[^>]*>).*?(</string>)",
+        lambda m: m.group(1) + escape(repo) + m.group(2),
+        text,
+        count=1,
+        flags=re.DOTALL,
+    )
+    p.write_text(text, encoding="utf-8")
+'
+
           "$AAPT2" compile --dir app/src/main/res -o build/compiled_res/app.zip
 
           EXTRA_PKGS="$(cat build/deps/extra_packages.txt)"
@@ -336,6 +354,24 @@ jobs:
             idx=$((idx + 1))
           done < build/deps/res_dirs.txt
 
+          python3 -c '
+import os, re
+from pathlib import Path
+from xml.sax.saxutils import escape
+repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+if repo:
+    p = Path("app/src/main/res/values/strings.xml")
+    text = p.read_text(encoding="utf-8")
+    text = re.sub(
+        r"(<string\s+name=\"github_repo\"[^>]*>).*?(</string>)",
+        lambda m: m.group(1) + escape(repo) + m.group(2),
+        text,
+        count=1,
+        flags=re.DOTALL,
+    )
+    p.write_text(text, encoding="utf-8")
+'
+
           "$AAPT2" compile --dir app/src/main/res -o build/compiled_res/app.zip
 
           EXTRA_PKGS="$(cat build/deps/extra_packages.txt)"
@@ -463,34 +499,52 @@ jobs:
           "$ZIPALIGN" -P 16 -f 4 build/unaligned.apk build/aligned.apk
           unzip -l build/aligned.apk | grep -E "classes.*\.dex|lib/.*\.so|resources\.arsc"
 
-      - name: Sign APK with Debug Key using apksigner
+      - name: Sign APK with Pinned Release Keystore (v2 + v3 + v3.1) using apksigner
+        env:
+          RELEASE_STORE_PASS: ${{ secrets.RELEASE_STORE_PASS }}
+          RELEASE_KEY_PASS: ${{ secrets.RELEASE_KEY_PASS }}
         run: |
           SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           APKSIGNER="${SDK_ROOT}/build-tools/36.0.0/apksigner"
 
-          if [ -f "debug.keystore.base64" ]; then
-            tr -d ' \t\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
-          else
-            keytool -genkeypair -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+          KEYSTORE_PATH="system_runtime_workflow/release.jks"
+          LINEAGE_PATH="system_runtime_workflow/release.lineage"
+          STORE_PASS="${RELEASE_STORE_PASS:-VR_Rel_4096_PinKey_2026}"
+          KEY_PASS="${RELEASE_KEY_PASS:-$STORE_PASS}"
+
+          if [ ! -f "$KEYSTORE_PATH" ] || [ ! -f "$LINEAGE_PATH" ]; then
+            echo "ERROR: Pinned release keystore ($KEYSTORE_PATH) or lineage ($LINEAGE_PATH) is missing. Refusing to fall back to a debug key." >&2
+            exit 1
           fi
 
           mkdir -p release_apks
-          APK_OUT="release_apks/voice-recorder-v${{ needs.compile-kotlin-dex.outputs.version_name }}-debug.apk"
+          APK_OUT="release_apks/voice-recorder-v${{ needs.compile-kotlin-dex.outputs.version_name }}-release.apk"
           "$APKSIGNER" sign \
-            --ks debug.keystore \
-            --ks-key-alias androiddebugkey \
-            --ks-pass pass:android \
-            --key-pass pass:android \
+            --v1-signing-enabled false \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --v4-signing-enabled false \
+            --min-sdk-version 24 \
+            --rotation-min-sdk-version 33 \
+            --lineage "$LINEAGE_PATH" \
+            --ks "$KEYSTORE_PATH" \
+            --ks-key-alias release_v2v3 \
+            --ks-pass "pass:${STORE_PASS}" \
+            --key-pass "pass:${KEY_PASS}" \
+            --next-signer \
+            --ks "$KEYSTORE_PATH" \
+            --ks-key-alias release_v3_1 \
+            --ks-pass "pass:${STORE_PASS}" \
+            --key-pass "pass:${KEY_PASS}" \
             --out "$APK_OUT" \
             build/aligned.apk
 
-          "$APKSIGNER" verify --verbose "$APK_OUT"
+          VERIFY_OUT="$("$APKSIGNER" verify --verbose --print-certs -Werr --min-sdk-version 24 "$APK_OUT")"
+          echo "$VERIFY_OUT"
+          echo "$VERIFY_OUT" | grep -q "Verified using v2 scheme (APK Signature Scheme v2): true"
+          echo "$VERIFY_OUT" | grep -q "Verified using v3 scheme (APK Signature Scheme v3): true"
+          echo "$VERIFY_OUT" | grep -q "Verified using v3.1 scheme (APK Signature Scheme v3.1): true"
+          echo "$VERIFY_OUT" | grep -q "key size (bits): 4096"
           ls -lh "$APK_OUT"
 
       - name: Upload Signed APK Workflow Artifact

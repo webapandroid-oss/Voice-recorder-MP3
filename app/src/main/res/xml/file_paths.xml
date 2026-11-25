@@ -3,4 +3,7 @@
     <files-path
         name="mp3_recordings"
         path="recordings/" />
+    <files-path
+        name="app_updates"
+        path="updates/" />
 </paths>

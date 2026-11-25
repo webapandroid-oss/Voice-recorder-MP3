@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -51,9 +52,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.android.abdullah.voicerecorder.mp3.R
 import com.android.abdullah.voicerecorder.mp3.model.RecorderStatus
+import com.android.abdullah.voicerecorder.mp3.model.UpdateUiState
 import com.android.abdullah.voicerecorder.mp3.ui.components.QualitySettingsSheet
 import com.android.abdullah.voicerecorder.mp3.ui.screens.LibraryScreen
 import com.android.abdullah.voicerecorder.mp3.ui.screens.RecordScreen
+import com.android.abdullah.voicerecorder.mp3.ui.screens.UpdateScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,6 +72,9 @@ fun VoiceRecorderApp(
     val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
     val draftTitle by viewModel.customDraftTitle.collectAsStateWithLifecycle()
     val isConvertingMp3 by viewModel.isConvertingMp3.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val showUpdateScreen by viewModel.showUpdateScreen.collectAsStateWithLifecycle()
+    val configuredRepo by viewModel.configuredRepo.collectAsStateWithLifecycle()
 
     var currentDestination by rememberSaveable { mutableStateOf(MainDestination.RECORD) }
     var moreMenuExpanded by remember { mutableStateOf(false) }
@@ -87,6 +93,42 @@ fun VoiceRecorderApp(
         viewModel.uiMessages.collect { message ->
             snackbarHostState.showSnackbar(message)
         }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.installIntentEvents.collect { intent ->
+            runCatching {
+                context.startActivity(intent)
+            }.onFailure { err ->
+                snackbarHostState.showSnackbar(err.message ?: "Unable to launch package installer")
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.unknownSourceIntentEvents.collect { intent ->
+            runCatching {
+                context.startActivity(intent)
+            }.onFailure { err ->
+                snackbarHostState.showSnackbar(err.message ?: "Unable to open Unknown Sources settings")
+            }
+        }
+    }
+
+    if (showUpdateScreen) {
+        UpdateScreen(
+            updateState = updateState,
+            configuredRepo = configuredRepo,
+            onBack = viewModel::dismissUpdateScreen,
+            onCheckAgain = { viewModel.checkForUpdates(autoOpenIfAvailable = false) },
+            onSaveRepoAndCheck = viewModel::saveRepoAndCheck,
+            onDownloadUpdate = viewModel::downloadUpdate,
+            onCancelDownload = viewModel::cancelDownload,
+            onInstallNow = viewModel::onInstallNowClicked,
+            onRequestUnknownSourcePermission = viewModel::onRequestUnknownSourcePermission,
+            onRefreshInstallPermission = viewModel::refreshInstallPermissionState
+        )
+        return
     }
 
     BackHandler(enabled = currentDestination == MainDestination.LIBRARY) {
@@ -110,15 +152,25 @@ fun VoiceRecorderApp(
                         )
                     },
                     actions = {
+                        val hasPendingUpdate = updateState is UpdateUiState.Available ||
+                            updateState is UpdateUiState.ReadyToInstall
                         Box {
                             IconButton(
                                 onClick = { moreMenuExpanded = true },
                                 modifier = Modifier.testTag("more_options_button")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.MoreVert,
-                                    contentDescription = stringResource(R.string.action_more_options)
-                                )
+                                BadgedBox(
+                                    badge = {
+                                        if (hasPendingUpdate) {
+                                            Badge(containerColor = MaterialTheme.colorScheme.secondary)
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.MoreVert,
+                                        contentDescription = stringResource(R.string.action_more_options)
+                                    )
+                                }
                             }
                             DropdownMenu(
                                 expanded = moreMenuExpanded,
@@ -139,6 +191,20 @@ fun VoiceRecorderApp(
                                         showQualitySheet = true
                                     },
                                     modifier = Modifier.testTag("menu_quality_settings")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_check_updates)) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.SystemUpdate,
+                                            contentDescription = null
+                                        )
+                                    },
+                                    onClick = {
+                                        moreMenuExpanded = false
+                                        viewModel.openUpdateScreen()
+                                    },
+                                    modifier = Modifier.testTag("menu_check_updates")
                                 )
                             }
                         }

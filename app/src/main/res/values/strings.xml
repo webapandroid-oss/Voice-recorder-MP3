@@ -27,4 +27,24 @@
     <string name="notification_channel_desc">Shows ongoing MP3 voice recording status</string>
     <string name="notification_recording_title">Recording MP3 Audio</string>
     <string name="notification_paused_title">MP3 Recording Paused</string>
+    <string name="github_repo" translatable="false"></string>
+    <string name="action_check_updates">Check for Updates</string>
+    <string name="update_screen_title">App Update</string>
+    <string name="update_available_badge">UPDATE AVAILABLE</string>
+    <string name="update_up_to_date_title">Up to Date</string>
+    <string name="update_up_to_date_body">You are running the latest version available on GitHub Releases.</string>
+    <string name="update_checking_label">Checking GitHub Releases…</string>
+    <string name="update_release_notes_title">Release Notes</string>
+    <string name="update_no_notes">No release notes provided.</string>
+    <string name="update_download_button">Download Update</string>
+    <string name="update_downloading_button">Downloading…</string>
+    <string name="update_install_now_button">Install Now</string>
+    <string name="update_allow_unknown_button">Allow Unknown App Permission</string>
+    <string name="update_cancel_download">Cancel</string>
+    <string name="update_later_button">Later</string>
+    <string name="update_retry_button">Check Again</string>
+    <string name="update_permission_hint">Allow Voice Recorder to install unknown apps in system settings, then tap Install Now.</string>
+    <string name="update_repo_label">GitHub Repository (owner/repo)</string>
+    <string name="update_repo_hint">Set owner/repo to fetch releases from GitHub.</string>
+    <string name="update_save_repo">Save &amp; Check</string>
 </resources>

@@ -48,6 +48,6 @@ object FormatUtils {
 
     fun formatDefaultRecordingName(date: Date = Date()): String {
         val timestamp = SimpleDateFormat("dd_MM_yyyy_HH_mm_ss", Locale.US).format(date)
-        return "রেকর্ডিং_$timestamp"
+        return "Recording_$timestamp"
     }
 }

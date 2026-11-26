@@ -48,9 +48,9 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `app version is 1_0_4 with versionCode 5`() {
-        assertEquals(5, BuildConfig.VERSION_CODE)
-        assertEquals("1.0.4", BuildConfig.VERSION_NAME)
+    fun `app version is 1_0_5 with versionCode 6`() {
+        assertEquals(6, BuildConfig.VERSION_CODE)
+        assertEquals("1.0.5", BuildConfig.VERSION_NAME)
     }
 
     @Test
@@ -70,14 +70,31 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `default mp3 filename matches Bengali timestamp format`() {
+    fun `default mp3 filename matches Recording timestamp format in Music Voice Recorder`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = RecordingsRepository(context)
         val cal = Calendar.getInstance().apply {
             set(2026, Calendar.NOVEMBER, 23, 14, 5, 9)
         }
         val file = repo.createNewMp3File(customTitle = null, timestampDate = cal.time)
-        assertEquals("রেকর্ডিং_23_11_2026_14_05_09.mp3", file.name)
+        assertEquals("Recording_23_11_2026_14_05_09.mp3", file.name)
+        assertTrue(file.absolutePath.contains("Music/Voice Recorder"))
+    }
+
+    @Test
+    fun `sd card prompt and storage switch strings match specification`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assertEquals("Save recordings to SD cards?", context.getString(R.string.sd_card_prompt_title))
+        assertEquals("Cancel", context.getString(R.string.action_cancel))
+        assertEquals("Change", context.getString(R.string.action_change))
+        assertEquals(
+            "Change storage location to Internal Storage",
+            context.getString(R.string.action_switch_to_internal)
+        )
+        assertEquals(
+            "Change storage location to SD card",
+            context.getString(R.string.action_switch_to_sd_card)
+        )
     }
 
     @Test

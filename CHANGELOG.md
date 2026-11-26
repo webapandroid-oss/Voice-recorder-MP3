@@ -2,6 +2,18 @@
 
 All notable changes to Voice Recorder will be documented in this file.
 
+## [1.0.5] - 2026-11-26 (Version Code 6)
+
+### Changed
+- **Default English Recording Filename Format:** Updated default recording filenames to `Recording_dd_MM_yyyy_HH_mm_ss.mp3` (with `"Recording"` in English before the timestamp).
+- **Direct Internal Storage Saving (No Cache):** Recordings are now encoded and saved directly to `/storage/emulated/0/Music/Voice Recorder` via `MediaStore` (and direct public `Music/Voice Recorder` on Android 7–9) without using temporary or private cache files.
+- **Bumped App Version:** Updated `versionName` to `1.0.5` and `versionCode` to `6`.
+
+### Added
+- **Direct SD Card Saving (`Music/Voice Recorder`):** Added support for saving MP3 recordings directly to `Music/Voice Recorder` on an inserted SD card.
+- **SD Card Launch Prompt:** Automatically displays a `"Save recordings to SD cards?"` dialog with **Cancel** and **Change** buttons when opening the app with an SD card inserted while using Internal Storage.
+- **More Options Storage Switcher:** Added **"Change storage location to Internal Storage"** and **"Change storage location to SD card"** options in the top-right **More Options (`⋮`)** menu whenever an SD card is available.
+
 ## [1.0.4] - 2026-11-26 (Version Code 5)
 
 ### Fixed

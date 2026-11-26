@@ -55,4 +55,10 @@
     <string name="update_banner_ready_subtitle">Update downloaded and ready to install</string>
     <string name="update_banner_action">Update</string>
     <string name="update_banner_install_action">Install</string>
+    <string name="sd_card_prompt_title">Save recordings to SD cards?</string>
+    <string name="sd_card_prompt_body">An SD card is inserted. Switch storage location to save recordings directly in Music/Voice Recorder on your SD card?</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_change">Change</string>
+    <string name="action_switch_to_internal">Change storage location to Internal Storage</string>
+    <string name="action_switch_to_sd_card">Change storage location to SD card</string>
 </resources>

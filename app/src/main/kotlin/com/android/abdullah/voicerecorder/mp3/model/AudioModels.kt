@@ -53,6 +53,11 @@ enum class SortOrder(val label: String) {
     LARGEST("Largest")
 }
 
+enum class StorageLocation {
+    INTERNAL,
+    SD_CARD
+}
+
 data class Mp3Recording(
     val id: String,
     val displayName: String,
@@ -61,7 +66,9 @@ data class Mp3Recording(
     val durationMs: Long,
     val sizeBytes: Long,
     val createdAtMillis: Long,
-    val bitrateKbps: Int? = null
+    val bitrateKbps: Int? = null,
+    val contentUri: String? = null,
+    val storageLocation: StorageLocation = StorageLocation.INTERNAL
 )
 
 data class PlaybackState(

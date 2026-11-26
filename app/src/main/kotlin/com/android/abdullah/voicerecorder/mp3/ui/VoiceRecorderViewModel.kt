@@ -9,13 +9,13 @@ import android.net.Uri
 import android.os.IBinder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.android.abdullah.voicerecorder.mp3.R
 import com.android.abdullah.voicerecorder.mp3.audio.Mp3AudioPlayer
 import com.android.abdullah.voicerecorder.mp3.data.GitHubUpdateRepository
 import com.android.abdullah.voicerecorder.mp3.data.InstallSessionEvent
 import com.android.abdullah.voicerecorder.mp3.data.InstallSessionEventBus
 import com.android.abdullah.voicerecorder.mp3.data.RecordingsRepository
 import com.android.abdullah.voicerecorder.mp3.data.ReleaseCheckResult
+import com.android.abdullah.voicerecorder.mp3.data.SdCardInfo
 import com.android.abdullah.voicerecorder.mp3.data.SettingsRepository
 import com.android.abdullah.voicerecorder.mp3.model.GitHubReleaseInfo
 import com.android.abdullah.voicerecorder.mp3.model.Mp3Bitrate
@@ -26,6 +26,7 @@ import com.android.abdullah.voicerecorder.mp3.model.PlaybackState
 import com.android.abdullah.voicerecorder.mp3.model.RecorderStatus
 import com.android.abdullah.voicerecorder.mp3.model.RecordingQualityConfig
 import com.android.abdullah.voicerecorder.mp3.model.SortOrder
+import com.android.abdullah.voicerecorder.mp3.model.StorageLocation
 import com.android.abdullah.voicerecorder.mp3.model.UpdateUiState
 import com.android.abdullah.voicerecorder.mp3.service.LiveRecordingState
 import com.android.abdullah.voicerecorder.mp3.service.Mp3RecordingService
@@ -33,9 +34,11 @@ import com.android.abdullah.voicerecorder.mp3.service.RecordingEvent
 import com.android.abdullah.voicerecorder.mp3.service.UpdateCheckEventBus
 import com.android.abdullah.voicerecorder.mp3.service.UpdateCheckJobService
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -61,7 +64,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     private val recordingsRepository = RecordingsRepository(context)
     private val settingsRepository = SettingsRepository(context)
     private val updateRepository = GitHubUpdateRepository(context)
-    private val audioPlayer = Mp3AudioPlayer()
+    private val audioPlayer = Mp3AudioPlayer(context)
 
     private val _recordingService = MutableStateFlow<Mp3RecordingService?>(null)
     private var serviceStateJob: Job? = null
@@ -74,6 +77,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     private var pendingInstallAfterPermission = false
     private var lastUpdateCheckAtMs = 0L
     private var lastAutoOpenedTag: String? = null
+    private var hasPromptedSdCardThisSession = false
 
     private val _liveRecordingState = MutableStateFlow(LiveRecordingState())
     val liveRecordingState: StateFlow<LiveRecordingState> = _liveRecordingState.asStateFlow()
@@ -83,6 +87,21 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
 
     val sortOrder: StateFlow<SortOrder> = settingsRepository.sortOrderFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SortOrder.NEWEST)
+
+    val storageLocation: StateFlow<StorageLocation> = settingsRepository.storageLocationFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StorageLocation.INTERNAL)
+
+    val sdCardTreeUri: StateFlow<String?> = settingsRepository.sdCardTreeUriFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private val _sdCardInfo = MutableStateFlow<SdCardInfo?>(null)
+    val sdCardInfo: StateFlow<SdCardInfo?> = _sdCardInfo.asStateFlow()
+
+    private val _showSdCardPrompt = MutableStateFlow(false)
+    val showSdCardPrompt: StateFlow<Boolean> = _showSdCardPrompt.asStateFlow()
+
+    private val _sdCardSafPickerEvents = MutableSharedFlow<Intent>(extraBufferCapacity = 4)
+    val sdCardSafPickerEvents: SharedFlow<Intent> = _sdCardSafPickerEvents.asSharedFlow()
 
     private val _rawRecordings = MutableStateFlow<List<Mp3Recording>>(emptyList())
     private val _searchQuery = MutableStateFlow("")
@@ -153,6 +172,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     }
 
     init {
+        refreshSdCardStatus(promptIfNeeded = true)
         refreshRecordings()
         bindRecordingService()
         observeInstallSessionEvents()
@@ -195,6 +215,8 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun onAppForegrounded() {
+        refreshSdCardStatus(promptIfNeeded = true)
+        refreshRecordings()
         val elapsed = System.currentTimeMillis() - lastUpdateCheckAtMs
         val state = _updateState.value
         if (elapsed >= FOREGROUND_CHECK_COOLDOWN_MS &&
@@ -206,6 +228,84 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
                 autoOpenIfAvailable = _liveRecordingState.value.status == RecorderStatus.IDLE,
                 silent = true
             )
+        }
+    }
+
+    private fun refreshSdCardStatus(promptIfNeeded: Boolean) {
+        viewModelScope.launch {
+            val detected = withContext(Dispatchers.IO) {
+                recordingsRepository.detectMountedSdCard()
+            }
+            _sdCardInfo.value = detected
+            val currentLocation = settingsRepository.storageLocationFlow.first()
+            if (detected == null) {
+                _showSdCardPrompt.value = false
+            } else if (promptIfNeeded &&
+                !hasPromptedSdCardThisSession &&
+                currentLocation == StorageLocation.INTERNAL
+            ) {
+                hasPromptedSdCardThisSession = true
+                _showSdCardPrompt.value = true
+            }
+        }
+    }
+
+    fun dismissSdCardPrompt() {
+        _showSdCardPrompt.value = false
+    }
+
+    fun requestSwitchToSdCard() {
+        if (_liveRecordingState.value.status != RecorderStatus.IDLE) {
+            _uiMessages.tryEmit("Stop current recording before changing storage location")
+            return
+        }
+        _showSdCardPrompt.value = false
+        viewModelScope.launch {
+            val sdCard = withContext(Dispatchers.IO) {
+                recordingsRepository.detectMountedSdCard()
+            }
+            _sdCardInfo.value = sdCard
+            if (sdCard == null) {
+                _uiMessages.tryEmit("SD card not found")
+                return@launch
+            }
+            val savedTree = settingsRepository.sdCardTreeUriFlow.first()
+            val canWrite = withContext(Dispatchers.IO) {
+                recordingsRepository.canWriteSdCardDirectly(sdCard, savedTree)
+            }
+            if (canWrite) {
+                settingsRepository.updateStorageLocation(StorageLocation.SD_CARD)
+                refreshRecordings()
+                _uiMessages.tryEmit("Storage location changed to SD card")
+            } else {
+                _sdCardSafPickerEvents.tryEmit(recordingsRepository.buildOpenSdCardTreeIntent())
+            }
+        }
+    }
+
+    fun onSdCardTreeSelected(uri: Uri?) {
+        if (uri == null) return
+        viewModelScope.launch {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+            }
+            settingsRepository.updateSdCardTreeUri(uri.toString())
+            settingsRepository.updateStorageLocation(StorageLocation.SD_CARD)
+            refreshRecordings()
+            _uiMessages.tryEmit("Storage location changed to SD card")
+        }
+    }
+
+    fun switchToInternalStorage() {
+        if (_liveRecordingState.value.status != RecorderStatus.IDLE) {
+            _uiMessages.tryEmit("Stop current recording before changing storage location")
+            return
+        }
+        viewModelScope.launch {
+            settingsRepository.updateStorageLocation(StorageLocation.INTERNAL)
+            refreshRecordings()
+            _uiMessages.tryEmit("Storage location changed to Internal Storage")
         }
     }
 
@@ -288,7 +388,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
                     is RecordingEvent.Saved -> {
                         _customDraftTitle.value = ""
                         refreshRecordings()
-                        _uiMessages.tryEmit("Saved ${event.file.name}")
+                        _uiMessages.tryEmit("Saved ${event.result.fileName}")
                     }
                     is RecordingEvent.Discarded -> {
                         _customDraftTitle.value = ""
@@ -307,26 +407,33 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun startRecording() {
-        // Stop playback if any MP3 is playing
         audioPlayer.stopIfPlaying()
 
         val intent = Intent(context, Mp3RecordingService::class.java)
         context.startService(intent)
 
-        val svc = _recordingService.value
-        if (svc != null) {
-            svc.startRecording(
-                config = qualityConfig.value,
-                customTitle = _customDraftTitle.value.takeIf { it.isNotBlank() }
-            )
-        } else {
-            bindRecordingService()
-            viewModelScope.launch {
+        viewModelScope.launch {
+            val targetLocation = settingsRepository.storageLocationFlow.first()
+            val treeUri = settingsRepository.sdCardTreeUriFlow.first()
+            val customTitle = _customDraftTitle.value.takeIf { it.isNotBlank() }
+
+            val svc = _recordingService.value
+            if (svc != null) {
+                svc.startRecording(
+                    config = qualityConfig.value,
+                    customTitle = customTitle,
+                    storageLocation = targetLocation,
+                    sdCardTreeUri = treeUri
+                )
+            } else {
+                bindRecordingService()
                 _recordingService.collect { boundSvc ->
                     if (boundSvc != null && boundSvc.state.value.status == RecorderStatus.IDLE) {
                         boundSvc.startRecording(
                             config = qualityConfig.value,
-                            customTitle = _customDraftTitle.value.takeIf { it.isNotBlank() }
+                            customTitle = customTitle,
+                            storageLocation = targetLocation,
+                            sdCardTreeUri = treeUri
                         )
                         return@collect
                     }
@@ -382,7 +489,8 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
 
     fun refreshRecordings() {
         viewModelScope.launch {
-            _rawRecordings.value = recordingsRepository.loadRecordings()
+            val treeUri = settingsRepository.sdCardTreeUriFlow.first()
+            _rawRecordings.value = recordingsRepository.loadRecordings(treeUri)
         }
     }
 
@@ -448,11 +556,15 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch {
             _isConvertingMp3.value = true
             val cfg = qualityConfig.value
+            val loc = settingsRepository.storageLocationFlow.first()
+            val treeUri = settingsRepository.sdCardTreeUriFlow.first()
             recordingsRepository.convertUriToMp3(
                 sourceUri = uri,
                 bitrateKbps = cfg.bitrate.kbps,
                 sampleRateHz = cfg.sampleRate.hz,
-                channels = cfg.channelMode.channels
+                channels = cfg.channelMode.channels,
+                storageLocation = loc,
+                sdCardTreeUri = treeUri
             ).onSuccess { saved ->
                 refreshRecordings()
                 _uiMessages.tryEmit("Converted to ${saved.fileName}")

@@ -25,7 +25,9 @@
   - **Channels:** `Mono` or `Stereo`
 - **Background Recording Service:** Uses an Android Foreground Service (`microphone`) so recording continues smoothly when you lock your screen or switch apps, complete with **Pause / Resume** and **Save MP3** notification controls.
 - **Pause, Resume & Safe Discard:** Pause and continue within the same MP3 file seamlessly, or discard unwanted takes (with a confirmation prompt for recordings of 3 seconds or longer).
-- **Custom Recording Titles:** Set a custom filename before hitting record, or let the app auto-name files with a timestamp.
+- **Direct Storage Saving (No Cache):** Recordings are encoded and saved directly to `/storage/emulated/0/Music/Voice Recorder` (Internal Storage) or `Music/Voice Recorder` on an inserted **SD card**—no temporary cache files.
+- **SD Card Prompt & Quick Switcher:** Automatically asks **"Save recordings to SD cards?"** when an SD card is inserted, and lets you switch anytime via **⋮ → Change storage location to Internal Storage / SD card**.
+- **Custom Recording Titles:** Set a custom filename before hitting record, or let the app auto-name files as `Recording_dd_MM_yyyy_HH_mm_ss.mp3`.
 - **Recordings Library & File Management:**
   - Instant search by recording title or filename
   - Quick sorting by **Newest**, **Oldest**, **Longest**, or **Largest**
@@ -62,17 +64,18 @@
 
 ## 💾 How to Save
 
-### 1. Finish & Save a Recording
+### 1. Finish & Save Directly
 - While recording or paused, tap the **Stop (`■`)** button on the right side of the control deck—or tap **Save MP3** directly on the ongoing recording notification.
-- The app flushes the MP3 encoder and saves your `.mp3` file into the **Recordings** library.
+- The app flushes the MP3 encoder and saves your `.mp3` file directly into `Music/Voice Recorder` on your active storage location (**Internal Storage** `/storage/emulated/0/Music/Voice Recorder` or **SD card** `Music/Voice Recorder`).
 
-### 2. Save (Export) to Your Device's Shared Storage
-New recordings are initially stored inside the app's private library. To copy an MP3 to your phone's shared storage for external music players or file managers:
+### 2. Switch Between Internal Storage & SD Card
+- When an SD card is inserted while Internal Storage is selected, opening the app prompts **"Save recordings to SD cards?"** (**Cancel** / **Change**).
+- To switch manually anytime while an SD card is inserted, tap **⋮ (More Options)** in the top-right corner and choose **Change storage location to SD card** or **Change storage location to Internal Storage**.
+
+### 3. Copy an SD Card Recording to Internal Storage
 1. Open the **Recordings** tab.
-2. Tap **⋮** on the recording card you want to export.
-3. Tap **Save**.
-   - **Android 10 (API 29) & newer:** Saves directly to `Music/Voice Recorder/<filename>.mp3` via `MediaStore` (no storage permission required).
-   - **Android 7.0 – 9 (API 24–28):** Saves to the app's external `Music` directory.
+2. Tap **⋮** on any recording card.
+3. Tap **Save** to copy it to Internal Storage (`Music/Voice Recorder/<filename>.mp3`).
 
 ---
 
@@ -94,8 +97,7 @@ New recordings are initially stored inside the app's private library. To copy an
 Please keep the following caveats and potential issues in mind before using the app:
 
 - **Audio-to-MP3 Converter Format Limit:** Although the system file picker lets you browse general audio files, the bundled `libffmpeg.so` is intentionally built as an MP3-only library supporting **MP3, WAV, and raw PCM** (`pcm_s16le`, `pcm_s24le`, `pcm_s32le`, `pcm_f32le`, `pcm_u8`) inputs. Attempting to convert `.m4a`, `.aac`, `.ogg`, `.flac`, or `.opus` files will fail.
-- **Uninstalling Deletes Unexported Recordings:** All recordings are saved in the app's private internal storage (`files/recordings`) by default. Uninstalling the app or clearing app data will **permanently erase** any recordings that you have not exported via **Save** or **Share**.
-- **Android 7–9 Export Location:** On Android 7.0–9 (API 24–28), the **Save** action writes to the app-scoped external Music directory (`Android/data/.../files/Music`), which Android also removes upon uninstall—use **Share** if you want to move files elsewhere permanently on older devices.
+- **SD Card Removal & Android 7–9 Permissions:** Removing an SD card while SD card storage is selected will prevent new recordings until the SD card is reinserted or you switch back to Internal Storage from **⋮ (More Options)**. On Android 7.0–9 (API 24–28), saving directly to Internal `Music/Voice Recorder` requires storage permission, and SD card access may ask you to select the SD card folder once via the system folder picker.
 - **Quality Settings Are Locked Mid-Recording:** You cannot change bitrate, sample rate, or channel mode while a recording is active or paused. Stop or discard the active session first.
 - **Hardware Microphone Compatibility:** Some Android devices do not support **Stereo** microphone capture or certain sample rates (such as `22.05 kHz` or `48 kHz`) in `AudioRecord`. If microphone initialization fails, switch back to **Mono** at **44.1 kHz**.
 - **Battery Optimization & Background Interruptions:** Aggressive manufacturer battery savers (such as MIUI, ColorOS, FunTouch OS, or One UI background limits) may stop long background recordings or delay background update checks unless battery optimization is disabled for the app.

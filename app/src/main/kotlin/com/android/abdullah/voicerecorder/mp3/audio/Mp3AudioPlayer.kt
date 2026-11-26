@@ -1,7 +1,9 @@
 package com.android.abdullah.voicerecorder.mp3.audio
 
+import android.content.Context
 import android.media.MediaPlayer
 import android.media.PlaybackParams
+import android.net.Uri
 import com.android.abdullah.voicerecorder.mp3.model.Mp3Recording
 import com.android.abdullah.voicerecorder.mp3.model.PlaybackState
 import kotlinx.coroutines.CoroutineScope
@@ -16,7 +18,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-class Mp3AudioPlayer {
+class Mp3AudioPlayer(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var mediaPlayer: MediaPlayer? = null
     private var progressJob: Job? = null
@@ -41,7 +43,12 @@ class Mp3AudioPlayer {
         stopInternal()
         try {
             val player = MediaPlayer().apply {
-                setDataSource(recording.filePath)
+                val uriStr = recording.contentUri
+                if (!uriStr.isNullOrBlank()) {
+                    setDataSource(context.applicationContext, Uri.parse(uriStr))
+                } else {
+                    setDataSource(recording.filePath)
+                }
                 prepare()
                 val speed = _playbackState.value.speed
                 if (speed != 1.0f) {

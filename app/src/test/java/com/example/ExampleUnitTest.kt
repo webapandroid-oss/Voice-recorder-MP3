@@ -17,12 +17,12 @@ import kotlin.math.sin
 class Mp3EncoderTest {
 
     @Test
-    fun `default recording filename matches Bengali date time format`() {
+    fun `default recording filename matches Recording date time format`() {
         val cal = Calendar.getInstance().apply {
             set(2026, Calendar.NOVEMBER, 23, 14, 5, 9)
         }
         val baseName = FormatUtils.formatDefaultRecordingName(cal.time)
-        assertEquals("রেকর্ডিং_23_11_2026_14_05_09", baseName)
+        assertEquals("Recording_23_11_2026_14_05_09", baseName)
     }
 
     @Test

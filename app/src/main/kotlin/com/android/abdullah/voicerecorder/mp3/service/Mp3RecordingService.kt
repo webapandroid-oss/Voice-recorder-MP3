@@ -20,12 +20,12 @@ import androidx.core.app.NotificationCompat
 import com.android.abdullah.voicerecorder.mp3.MainActivity
 import com.android.abdullah.voicerecorder.mp3.R
 import com.android.abdullah.voicerecorder.mp3.audio.Mp3Encoder
+import com.android.abdullah.voicerecorder.mp3.data.DirectRecordingTarget
 import com.android.abdullah.voicerecorder.mp3.data.RecordingsRepository
-import com.android.abdullah.voicerecorder.mp3.model.Mp3Bitrate
-import com.android.abdullah.voicerecorder.mp3.model.Mp3ChannelMode
-import com.android.abdullah.voicerecorder.mp3.model.Mp3SampleRate
+import com.android.abdullah.voicerecorder.mp3.data.SavedRecordingResult
 import com.android.abdullah.voicerecorder.mp3.model.RecorderStatus
 import com.android.abdullah.voicerecorder.mp3.model.RecordingQualityConfig
+import com.android.abdullah.voicerecorder.mp3.model.StorageLocation
 import com.android.abdullah.voicerecorder.mp3.util.FormatUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,8 +43,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.BufferedOutputStream
-import java.io.File
-import java.io.FileOutputStream
+import java.util.Date
 import kotlin.math.log10
 import kotlin.math.sqrt
 
@@ -58,7 +57,7 @@ data class LiveRecordingState(
 )
 
 sealed interface RecordingEvent {
-    data class Saved(val file: File) : RecordingEvent
+    data class Saved(val result: SavedRecordingResult) : RecordingEvent
     data object Discarded : RecordingEvent
     data class Error(val message: String) : RecordingEvent
 }
@@ -86,10 +85,12 @@ class Mp3RecordingService : Service() {
     @Volatile
     private var isPaused = false
 
+    @Volatile
+    private var shouldDiscard = false
+
     private var recordingJob: Job? = null
     private var timerJob: Job? = null
-    private var currentOutputFile: File? = null
-    private var pendingCustomTitle: String? = null
+    private var currentTarget: DirectRecordingTarget? = null
 
     private var accumulatedElapsedMs = 0L
     private var lastSegmentStartClockMs = 0L
@@ -113,17 +114,33 @@ class Mp3RecordingService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    fun startRecording(config: RecordingQualityConfig, customTitle: String?) {
+    fun startRecording(
+        config: RecordingQualityConfig,
+        customTitle: String?,
+        storageLocation: StorageLocation = StorageLocation.INTERNAL,
+        sdCardTreeUri: String? = null
+    ) {
         if (_state.value.status != RecorderStatus.IDLE) return
 
-        pendingCustomTitle = customTitle?.trim()?.takeIf { it.isNotEmpty() }
-        val tempFile = repository.createTempRecordingFile()
-        currentOutputFile = tempFile
-        val previewName = pendingCustomTitle?.let { "$it.mp3" } ?: "রেকর্ডিং_...mp3"
+        val cleanedCustomTitle = customTitle?.trim()?.takeIf { it.isNotEmpty() }
+        val targetResult = repository.createDirectRecordingTarget(
+            customTitle = cleanedCustomTitle,
+            storageLocation = storageLocation,
+            sdCardTreeUri = sdCardTreeUri,
+            timestampDate = Date()
+        )
+        val target = targetResult.getOrElse { err ->
+            _events.tryEmit(RecordingEvent.Error(err.message ?: "Could not create recording file"))
+            return
+        }
+
+        currentTarget = target
+        val activeName = target.fileName
         accumulatedElapsedMs = 0L
         lastSegmentStartClockMs = SystemClock.elapsedRealtime()
         isCapturing = true
         isPaused = false
+        shouldDiscard = false
 
         _state.value = LiveRecordingState(
             status = RecorderStatus.RECORDING,
@@ -131,19 +148,16 @@ class Mp3RecordingService : Service() {
             encodedBytes = 0L,
             currentLevelDb = -60f,
             amplitudes = emptyList(),
-            activeFileName = previewName
+            activeFileName = activeName
         )
 
-        startForegroundCompat(buildNotification(paused = false, elapsedMs = 0L, fileName = previewName))
+        startForegroundCompat(buildNotification(paused = false, elapsedMs = 0L, fileName = activeName))
         startTimerLoop()
 
         recordingJob = serviceScope.launch(Dispatchers.IO) {
-            runCaptureAndMp3Encode(tempFile, config, discardOnFinish = { shouldDiscard })
+            runCaptureAndMp3Encode(target, config, discardOnFinish = { shouldDiscard })
         }
     }
-
-    @Volatile
-    private var shouldDiscard = false
 
     fun pauseRecording() {
         if (_state.value.status != RecorderStatus.RECORDING) return
@@ -194,7 +208,7 @@ class Mp3RecordingService : Service() {
 
     @SuppressLint("MissingPermission")
     private suspend fun runCaptureAndMp3Encode(
-        outputFile: File,
+        target: DirectRecordingTarget,
         config: RecordingQualityConfig,
         discardOnFinish: () -> Boolean
     ) {
@@ -212,7 +226,7 @@ class Mp3RecordingService : Service() {
             AudioFormat.ENCODING_PCM_16BIT
         )
         if (minBufBytes == AudioRecord.ERROR || minBufBytes == AudioRecord.ERROR_BAD_VALUE) {
-            finishWithError("Device microphone does not support ${sampleRate}Hz ${config.channelMode.label}", outputFile)
+            finishWithError("Device microphone does not support ${sampleRate}Hz ${config.channelMode.label}", target)
             return
         }
 
@@ -236,7 +250,7 @@ class Mp3RecordingService : Service() {
                 bufferBytes
             )
             if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-                finishWithError("Could not initialize microphone capture", outputFile)
+                finishWithError("Could not initialize microphone capture", target)
                 return
             }
 
@@ -246,7 +260,7 @@ class Mp3RecordingService : Service() {
                 bitrateKbps = config.bitrate.kbps,
                 quality = 4
             )
-            outputStream = BufferedOutputStream(FileOutputStream(outputFile))
+            outputStream = target.openOutputStream()
 
             audioRecord.startRecording()
 
@@ -257,7 +271,6 @@ class Mp3RecordingService : Service() {
                         continue
                     }
 
-                    // Compute RMS amplitude & dBFS
                     var sumSquares = 0.0
                     for (i in 0 until readCount) {
                         val s = pcmBuffer[i].toDouble()
@@ -270,7 +283,6 @@ class Mp3RecordingService : Service() {
                     } else {
                         -60f
                     }
-                    // Boost visual responsiveness for speech levels
                     val visualAmp = ((db + 52f) / 52f).coerceIn(0.03f, 1f)
 
                     val encodedCount = encoder.encodePcm16(pcmBuffer, readCount, mp3Buffer)
@@ -308,13 +320,20 @@ class Mp3RecordingService : Service() {
                 outputStream.flush()
             }
         } catch (e: Exception) {
-            finishWithError(e.message ?: "MP3 encoding failed", outputFile)
-            return
-        } finally {
+            target.closeStream(outputStream)
+            outputStream = null
             try {
-                outputStream?.close()
+                encoder?.close()
             } catch (_: Exception) {
             }
+            try {
+                audioRecord?.release()
+            } catch (_: Exception) {
+            }
+            finishWithError(e.message ?: "MP3 encoding failed", target)
+            return
+        } finally {
+            target.closeStream(outputStream)
             try {
                 encoder?.close()
             } catch (_: Exception) {
@@ -326,22 +345,15 @@ class Mp3RecordingService : Service() {
         }
 
         val discarded = discardOnFinish()
-        if (discarded || !outputFile.exists() || outputFile.length() == 0L) {
-            outputFile.delete()
+        if (discarded || totalBytesWritten <= 0L) {
+            target.discardAndDelete()
             _events.tryEmit(RecordingEvent.Discarded)
         } else {
-            val finalFile = repository.createNewMp3File(pendingCustomTitle, java.util.Date())
-            val moved = outputFile.renameTo(finalFile) || try {
-                outputFile.copyTo(finalFile, overwrite = true)
-                outputFile.delete()
-                true
-            } catch (_: Exception) {
-                false
-            }
-            if (moved && finalFile.exists() && finalFile.length() > 0L) {
-                _events.tryEmit(RecordingEvent.Saved(finalFile))
+            val saved = target.finalizeSuccess(accumulatedElapsedMs, totalBytesWritten)
+            if (saved != null) {
+                _events.tryEmit(RecordingEvent.Saved(saved))
             } else {
-                outputFile.delete()
+                target.discardAndDelete()
                 _events.tryEmit(RecordingEvent.Error("Could not save MP3 recording"))
             }
         }
@@ -349,16 +361,15 @@ class Mp3RecordingService : Service() {
         resetToIdleAndStopForeground()
     }
 
-    private fun finishWithError(message: String, outputFile: File) {
-        outputFile.delete()
+    private fun finishWithError(message: String, target: DirectRecordingTarget) {
+        target.discardAndDelete()
         _events.tryEmit(RecordingEvent.Error(message))
         resetToIdleAndStopForeground()
     }
 
     private fun resetToIdleAndStopForeground() {
         shouldDiscard = false
-        currentOutputFile = null
-        pendingCustomTitle = null
+        currentTarget = null
         timerJob?.cancel()
         _state.value = LiveRecordingState()
         stopForeground(STOP_FOREGROUND_REMOVE)

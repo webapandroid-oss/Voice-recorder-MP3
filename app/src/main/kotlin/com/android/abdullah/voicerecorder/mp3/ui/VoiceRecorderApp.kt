@@ -1,7 +1,10 @@
 package com.android.abdullah.voicerecorder.mp3.ui
 
+import android.app.Activity
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -27,8 +30,11 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.SdCard
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -47,6 +53,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
@@ -73,6 +80,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.android.abdullah.voicerecorder.mp3.R
 import com.android.abdullah.voicerecorder.mp3.model.RecorderStatus
+import com.android.abdullah.voicerecorder.mp3.model.StorageLocation
 import com.android.abdullah.voicerecorder.mp3.model.UpdateUiState
 import com.android.abdullah.voicerecorder.mp3.ui.components.QualitySettingsSheet
 import com.android.abdullah.voicerecorder.mp3.ui.screens.LibraryScreen
@@ -100,17 +108,28 @@ fun VoiceRecorderApp(
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val showUpdateScreen by viewModel.showUpdateScreen.collectAsStateWithLifecycle()
     val configuredRepo by viewModel.configuredRepo.collectAsStateWithLifecycle()
+    val storageLocation by viewModel.storageLocation.collectAsStateWithLifecycle()
+    val sdCardInfo by viewModel.sdCardInfo.collectAsStateWithLifecycle()
+    val showSdCardPrompt by viewModel.showSdCardPrompt.collectAsStateWithLifecycle()
 
     var currentDestination by rememberSaveable { mutableStateOf(MainDestination.RECORD) }
     var moreMenuExpanded by remember { mutableStateOf(false) }
     var showQualitySheet by rememberSaveable { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    val convertPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    val convertPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
             viewModel.convertAudioUriToMp3(uri)
+        }
+    }
+
+    val sdCardTreeLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            viewModel.onSdCardTreeSelected(result.data?.data)
         }
     }
 
@@ -135,6 +154,16 @@ fun VoiceRecorderApp(
     LaunchedEffect(Unit) {
         viewModel.uiMessages.collect { message ->
             snackbarHostState.showSnackbar(message)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.sdCardSafPickerEvents.collect { intent ->
+            runCatching {
+                sdCardTreeLauncher.launch(intent)
+            }.onFailure { err ->
+                snackbarHostState.showSnackbar(err.message ?: "Unable to open SD card folder picker")
+            }
         }
     }
 
@@ -236,6 +265,39 @@ fun VoiceRecorderApp(
                                     },
                                     modifier = Modifier.testTag("menu_quality_settings")
                                 )
+                                if (sdCardInfo != null || storageLocation == StorageLocation.SD_CARD) {
+                                    if (storageLocation == StorageLocation.SD_CARD) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.action_switch_to_internal)) },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.PhoneAndroid,
+                                                    contentDescription = null
+                                                )
+                                            },
+                                            onClick = {
+                                                moreMenuExpanded = false
+                                                viewModel.switchToInternalStorage()
+                                            },
+                                            modifier = Modifier.testTag("menu_switch_to_internal_storage")
+                                        )
+                                    } else {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.action_switch_to_sd_card)) },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.SdCard,
+                                                    contentDescription = null
+                                                )
+                                            },
+                                            onClick = {
+                                                moreMenuExpanded = false
+                                                viewModel.requestSwitchToSdCard()
+                                            },
+                                            modifier = Modifier.testTag("menu_switch_to_sd_card")
+                                        )
+                                    }
+                                }
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.action_check_updates)) },
                                     leadingIcon = {
@@ -441,6 +503,7 @@ fun VoiceRecorderApp(
                                 RecordScreen(
                                     liveState = liveRecordingState,
                                     draftTitle = draftTitle,
+                                    storageLocation = storageLocation,
                                     onDraftTitleChange = viewModel::updateDraftTitle,
                                     onStartRecording = viewModel::startRecording,
                                     onPauseRecording = viewModel::pauseRecording,
@@ -492,6 +555,7 @@ fun VoiceRecorderApp(
                                 RecordScreen(
                                     liveState = liveRecordingState,
                                     draftTitle = draftTitle,
+                                    storageLocation = storageLocation,
                                     onDraftTitleChange = viewModel::updateDraftTitle,
                                     onStartRecording = viewModel::startRecording,
                                     onPauseRecording = viewModel::pauseRecording,
@@ -542,6 +606,50 @@ fun VoiceRecorderApp(
             onSampleRateSelected = viewModel::updateSampleRate,
             onChannelModeSelected = viewModel::updateChannelMode,
             onDismiss = { showQualitySheet = false }
+        )
+    }
+
+    if (showSdCardPrompt) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissSdCardPrompt,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            icon = {
+                Icon(
+                    imageVector = Icons.Outlined.SdCard,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            title = {
+                Text(
+                    text = stringResource(R.string.sd_card_prompt_title),
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(R.string.sd_card_prompt_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = viewModel::requestSwitchToSdCard,
+                    modifier = Modifier.testTag("sd_card_prompt_change_button")
+                ) {
+                    Text(stringResource(R.string.action_change))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = viewModel::dismissSdCardPrompt,
+                    modifier = Modifier.testTag("sd_card_prompt_cancel_button")
+                ) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+            modifier = Modifier.testTag("sd_card_prompt_dialog")
         )
     }
 }

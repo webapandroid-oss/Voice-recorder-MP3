@@ -68,11 +68,11 @@ class GitHubUpdateRepository(private val context: Context) {
         return try {
             val pkgInfo = getPackageInfoCompat(context.packageName, 0)
             InstalledVersionInfo(
-                versionName = pkgInfo?.versionName ?: "1.0.4",
-                versionCode = pkgInfo?.let { PackageInfoCompat.getLongVersionCode(it) } ?: 5L
+                versionName = pkgInfo?.versionName ?: "1.0.5",
+                versionCode = pkgInfo?.let { PackageInfoCompat.getLongVersionCode(it) } ?: 6L
             )
         } catch (_: Exception) {
-            InstalledVersionInfo(versionName = "1.0.4", versionCode = 5L)
+            InstalledVersionInfo(versionName = "1.0.5", versionCode = 6L)
         }
     }
 

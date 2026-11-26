@@ -76,6 +76,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.android.abdullah.voicerecorder.mp3.R
 import com.android.abdullah.voicerecorder.mp3.model.RecorderStatus
+import com.android.abdullah.voicerecorder.mp3.model.StorageLocation
 import com.android.abdullah.voicerecorder.mp3.service.LiveRecordingState
 import com.android.abdullah.voicerecorder.mp3.ui.components.StudioWaveformCard
 import com.android.abdullah.voicerecorder.mp3.ui.theme.AmberMeter
@@ -87,6 +88,7 @@ import com.android.abdullah.voicerecorder.mp3.util.FormatUtils
 fun RecordScreen(
     liveState: LiveRecordingState,
     draftTitle: String,
+    storageLocation: StorageLocation = StorageLocation.INTERNAL,
     onDraftTitleChange: (String) -> Unit,
     onStartRecording: () -> Unit,
     onPauseRecording: () -> Unit,
@@ -132,13 +134,38 @@ fun RecordScreen(
         onStartRecording()
     }
 
+    val legacyStorageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                onStartRecording()
+            }
+        }
+    }
+
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasMicPermission = granted
         if (granted) {
             micPermissionDeniedOnce = false
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                storageLocation == StorageLocation.INTERNAL &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                legacyStorageLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.POST_NOTIFICATIONS
@@ -161,6 +188,16 @@ fun RecordScreen(
         hasMicPermission = micGranted
         if (!micGranted) {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            storageLocation == StorageLocation.INTERNAL &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            legacyStorageLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             return
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&

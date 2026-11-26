@@ -31,7 +31,6 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
@@ -45,19 +44,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -85,14 +78,12 @@ fun UpdateScreen(
     configuredRepo: String,
     onBack: () -> Unit,
     onCheckAgain: () -> Unit,
-    onSaveRepoAndCheck: (String) -> Unit,
     onDownloadUpdate: () -> Unit,
     onCancelDownload: () -> Unit,
     onInstallNow: () -> Unit,
     onRequestUnknownSourcePermission: () -> Unit,
     onRefreshInstallPermission: () -> Unit,
-    modifier: Modifier = Modifier,
-    onEditRepo: () -> Unit = {}
+    modifier: Modifier = Modifier
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -173,14 +164,6 @@ fun UpdateScreen(
                     is UpdateUiState.Idle,
                     is UpdateUiState.Checking -> {
                         CheckingUpdatesCard(configuredRepo = configuredRepo)
-                    }
-
-                    is UpdateUiState.RepoNotConfigured -> {
-                        RepoConfigurationCard(
-                            initialRepo = configuredRepo,
-                            currentVersion = updateState.currentVersion,
-                            onSaveRepoAndCheck = onSaveRepoAndCheck
-                        )
                     }
 
                     is UpdateUiState.UpToDate -> {
@@ -267,7 +250,6 @@ fun UpdateScreen(
                                 configuredRepo = configuredRepo,
                                 message = updateState.message,
                                 onCheckAgain = onCheckAgain,
-                                onEditRepo = onEditRepo,
                                 onBack = onBack
                             )
                         }
@@ -311,80 +293,6 @@ private fun CheckingUpdatesCard(configuredRepo: String) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RepoConfigurationCard(
-    initialRepo: String,
-    currentVersion: String,
-    onSaveRepoAndCheck: (String) -> Unit
-) {
-    var repoText by remember(initialRepo) { mutableStateOf(initialRepo) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
-        ),
-        shape = MaterialTheme.shapes.large
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.SystemUpdate,
-                    contentDescription = null,
-                    tint = CyanAccent
-                )
-                Column {
-                    Text(
-                        text = stringResource(R.string.action_check_updates),
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = "Current version: v$currentVersion",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Text(
-                text = stringResource(R.string.update_repo_hint),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            OutlinedTextField(
-                value = repoText,
-                onValueChange = { repoText = it },
-                label = { Text(stringResource(R.string.update_repo_label)) },
-                placeholder = { Text("owner/repository") },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("update_repo_input")
-            )
-
-            Button(
-                onClick = { onSaveRepoAndCheck(repoText) },
-                enabled = repoText.isNotBlank(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("update_save_repo_button")
-            ) {
-                Text(stringResource(R.string.update_save_repo))
             }
         }
     }
@@ -483,7 +391,6 @@ private fun UpdateErrorCard(
     configuredRepo: String,
     message: String,
     onCheckAgain: () -> Unit,
-    onEditRepo: () -> Unit,
     onBack: () -> Unit
 ) {
     Card(
@@ -537,14 +444,6 @@ private fun UpdateErrorCard(
                 ) {
                     Text(stringResource(R.string.update_retry_button))
                 }
-            }
-            TextButton(
-                onClick = onEditRepo,
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .testTag("update_change_repo_button")
-            ) {
-                Text(stringResource(R.string.update_change_repo))
             }
         }
     }

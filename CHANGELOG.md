@@ -2,6 +2,22 @@
 
 All notable changes to Voice Recorder will be documented in this file.
 
+## [1.0.4] - 2026-11-26 (Version Code 5)
+
+### Fixed
+- **Eliminated GitHub REST API Rate Limit Completely:** Replaced `api.github.com` runtime polling with a dedicated rate-limit-free `update-manifest.json` feed published directly by the APK build workflow (`raw.githubusercontent.com/.../update-feed/update-manifest.json` + GitHub Release `update-manifest.json` asset), backed by `releases.atom` and `/releases/expanded_assets/{tag}` fallbacks.
+- **Conditional HTTP & Local Metadata Caching:** Added `ETag` / `Last-Modified` (`304 Not Modified`) headers and persistent release metadata caching so repeated 1-minute checks transfer near-zero payload without ever hitting API quotas.
+
+### Added
+- **1-Minute Continuous Update Polling & Instant In-App Banner:** Updated the APK build workflow to generate and publish `update-manifest.json` (with exact APK size and SHA-256 checksum) on every build, configured 1-minute update polling inside the app and chained `JobScheduler` background checks, and added an immediate in-app **Update Available** banner and automatic update prompt as soon as a new release is detected.
+
+### Security
+- **Locked Official Repository (`webapandroid-oss/Voice-recorder-MP3`):** Permanently pinned all update checks and APK downloads to `webapandroid-oss/Voice-recorder-MP3` and removed repository configuration/editing UI and preferences to prevent malicious repository hijacking or spoofed app updates.
+- **Strict Download & Package Integrity Verification:** Enforced HTTPS-only GitHub/CDN host allowlists, SHA-256 APK checksum verification, exact package-name validation, anti-downgrade `versionCode` checks, and signing certificate verification on release builds before in-app installation.
+
+### Changed
+- Bumped semantic bugfix version to `1.0.4` and `versionCode` to `5`.
+
 ## [1.0.3] - 2026-11-25 (Version Code 4)
 
 ### Added

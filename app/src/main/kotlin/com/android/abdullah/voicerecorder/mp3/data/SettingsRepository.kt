@@ -24,7 +24,6 @@ class SettingsRepository(private val context: Context) {
         val SAMPLE_RATE_HZ = intPreferencesKey("sample_rate_hz")
         val CHANNELS = intPreferencesKey("channels")
         val SORT_ORDER = stringPreferencesKey("sort_order")
-        val GITHUB_REPO = stringPreferencesKey("github_repo")
     }
 
     val qualityConfigFlow: Flow<RecordingQualityConfig> = context.recorderDataStore.data.map { prefs ->
@@ -38,10 +37,6 @@ class SettingsRepository(private val context: Context) {
     val sortOrderFlow: Flow<SortOrder> = context.recorderDataStore.data.map { prefs ->
         val saved = prefs[Keys.SORT_ORDER]
         SortOrder.entries.find { it.name == saved } ?: SortOrder.NEWEST
-    }
-
-    val githubRepoFlow: Flow<String> = context.recorderDataStore.data.map { prefs ->
-        prefs[Keys.GITHUB_REPO].orEmpty()
     }
 
     suspend fun updateBitrate(bitrate: Mp3Bitrate) {
@@ -65,12 +60,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateSortOrder(sortOrder: SortOrder) {
         context.recorderDataStore.edit { prefs ->
             prefs[Keys.SORT_ORDER] = sortOrder.name
-        }
-    }
-
-    suspend fun updateGithubRepo(repo: String) {
-        context.recorderDataStore.edit { prefs ->
-            prefs[Keys.GITHUB_REPO] = repo.trim()
         }
     }
 }

@@ -48,9 +48,9 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `app version is 1_0_3 with versionCode 4`() {
-        assertEquals(4, BuildConfig.VERSION_CODE)
-        assertEquals("1.0.3", BuildConfig.VERSION_NAME)
+    fun `app version is 1_0_4 with versionCode 5`() {
+        assertEquals(5, BuildConfig.VERSION_CODE)
+        assertEquals("1.0.4", BuildConfig.VERSION_NAME)
     }
 
     @Test
@@ -176,10 +176,9 @@ class ExampleRobolectricTest {
             VoiceRecorderTheme {
                 UpdateScreen(
                     updateState = uiState.value,
-                    configuredRepo = "example/repo",
+                    configuredRepo = GitHubUpdateRepository.TRUSTED_GITHUB_REPO,
                     onBack = {},
                     onCheckAgain = {},
-                    onSaveRepoAndCheck = {},
                     onDownloadUpdate = {},
                     onCancelDownload = {},
                     onInstallNow = {},
@@ -189,6 +188,9 @@ class ExampleRobolectricTest {
             }
         }
 
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("update_repo_input").assertDoesNotExist()
+        composeRule.onNodeWithTag("update_change_repo_button").assertDoesNotExist()
         composeRule.onNodeWithText("Line 1: Release note details", substring = true).assertIsDisplayed()
         composeRule.onNodeWithTag("update_primary_action_button").assertIsDisplayed()
         composeRule.onNodeWithText("Download Update").assertIsDisplayed()
@@ -231,5 +233,193 @@ class ExampleRobolectricTest {
             "webapandroid-oss/Voice-recorder-MP3",
             GitHubUpdateRepository.normalizeRepoSlug("webapandroid-oss/Voice-recorder-MP3")
         )
+    }
+
+    @Test
+    fun `atom feed and expanded assets parsers extract release without github api`() {
+        val atomXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <feed xmlns="http://www.w3.org/2005/Atom">
+              <entry>
+                <id>tag:github.com,2008:Repository/999/v1.0.5-build.30</id>
+                <updated>2026-11-26T06:00:00Z</updated>
+                <link rel="alternate" type="text/html" href="https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/tag/v1.0.5-build.30"/>
+                <title>Voice Recorder v1.0.5 (Build #30)</title>
+                <content type="html">&lt;h2&gt;Voice Recorder v1.0.5&lt;/h2&gt;&lt;ul&gt;&lt;li&gt;Unlimited update check&lt;/li&gt;&lt;li&gt;&lt;code&gt;versionCode=6&lt;/code&gt;&lt;/li&gt;&lt;/ul&gt;</content>
+              </entry>
+            </feed>
+        """.trimIndent()
+
+        val entries = GitHubUpdateRepository.parseAtomFeedEntries(atomXml)
+        assertEquals(1, entries.size)
+        val entry = entries.first()
+        assertEquals("v1.0.5-build.30", entry.tagName)
+        assertEquals("Voice Recorder v1.0.5 (Build #30)", entry.title)
+        assertTrue(entry.releaseNotes.contains("Unlimited update check"))
+        assertEquals(6L, GitHubUpdateRepository.extractVersionCode(entry.releaseNotes))
+
+        val expandedHtml = """
+            <ul>
+              <li>
+                <a href="/webapandroid-oss/Voice-recorder-MP3/releases/download/v1.0.5-build.30/voice-recorder-v1.0.5-release.apk">
+                  voice-recorder-v1.0.5-release.apk
+                </a>
+                <span>19.5 MB</span>
+              </li>
+            </ul>
+        """.trimIndent()
+
+        val assets = GitHubUpdateRepository.parseExpandedAssetsHtml(expandedHtml)
+        assertEquals(1, assets.size)
+        assertEquals("voice-recorder-v1.0.5-release.apk", assets.first().name)
+        assertEquals(
+            "https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/download/v1.0.5-build.30/voice-recorder-v1.0.5-release.apk",
+            assets.first().downloadUrl
+        )
+        assertTrue(assets.first().sizeBytes > 19_000_000L)
+    }
+
+    @Test
+    fun `update security blocks untrusted repos http links and third party download urls`() {
+        assertTrue(
+            GitHubUpdateRepository.isTrustedReleaseDownloadUrl(
+                "https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/download/v1.0.4/voice-recorder-v1.0.4-release.apk"
+            )
+        )
+        assertFalse(
+            GitHubUpdateRepository.isTrustedReleaseDownloadUrl(
+                "http://github.com/webapandroid-oss/Voice-recorder-MP3/releases/download/v1.0.4/app.apk"
+            )
+        )
+        assertFalse(
+            GitHubUpdateRepository.isTrustedReleaseDownloadUrl(
+                "https://github.com/evil-hacker/Voice-recorder-MP3/releases/download/v1.0.4/app.apk"
+            )
+        )
+        assertFalse(
+            GitHubUpdateRepository.isTrustedReleaseDownloadUrl(
+                "https://evil.com/webapandroid-oss/Voice-recorder-MP3/releases/download/v1.0.4/app.apk"
+            )
+        )
+        assertFalse(
+            GitHubUpdateRepository.isTrustedReleaseDownloadUrl(
+                "https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/download/v1.0.4/readme.txt"
+            )
+        )
+
+        assertTrue(
+            GitHubUpdateRepository.isAllowedGitHubUrl(
+                java.net.URL("https://github.com/webapandroid-oss/Voice-recorder-MP3/releases.atom"),
+                allowAssetCdnHosts = false
+            )
+        )
+        assertFalse(
+            GitHubUpdateRepository.isAllowedGitHubUrl(
+                java.net.URL("http://github.com/webapandroid-oss/Voice-recorder-MP3/releases.atom"),
+                allowAssetCdnHosts = false
+            )
+        )
+        assertFalse(
+            GitHubUpdateRepository.isAllowedGitHubUrl(
+                java.net.URL("https://objects.githubusercontent.com/some-asset.apk"),
+                allowAssetCdnHosts = false
+            )
+        )
+        assertTrue(
+            GitHubUpdateRepository.isAllowedGitHubUrl(
+                java.net.URL("https://objects.githubusercontent.com/some-asset.apk"),
+                allowAssetCdnHosts = true
+            )
+        )
+        assertFalse(
+            GitHubUpdateRepository.isAllowedGitHubUrl(
+                java.net.URL("https://attacker.example.com/payload.apk"),
+                allowAssetCdnHosts = true
+            )
+        )
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = GitHubUpdateRepository(context)
+        var blocked = false
+        try {
+            kotlinx.coroutines.runBlocking {
+                repo.checkLatestRelease("evil-hacker/malware-clone")
+            }
+        } catch (_: SecurityException) {
+            blocked = true
+        }
+        assertTrue(blocked)
+    }
+
+    @Test
+    fun `workflow update manifest parser extracts version size and sha256`() {
+        val sampleSha = "a".repeat(64)
+        val manifestJson = """
+            {
+              "schema_version": 1,
+              "repository": "webapandroid-oss/Voice-recorder-MP3",
+              "tag_name": "v1.0.5-build.42",
+              "release_name": "Voice Recorder v1.0.5 (Build #42)",
+              "version_name": "1.0.5",
+              "version_code": 6,
+              "release_notes": "Faster background update check",
+              "published_at": "2026-11-26T06:00:00Z",
+              "apk_asset_name": "voice-recorder-v1.0.5-release.apk",
+              "apk_download_url": "https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/download/v1.0.5-build.42/voice-recorder-v1.0.5-release.apk",
+              "apk_size_bytes": 21500000,
+              "apk_sha256": "$sampleSha",
+              "html_url": "https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/tag/v1.0.5-build.42"
+            }
+        """.trimIndent()
+
+        val parsed = GitHubUpdateRepository.parseUpdateManifestJson(manifestJson)
+        assertNotNull(parsed)
+        assertEquals("v1.0.5-build.42", parsed!!.tagName)
+        assertEquals("1.0.5", parsed.versionName)
+        assertEquals(6L, parsed.versionCode)
+        assertEquals(21500000L, parsed.apkSizeBytes)
+        assertEquals(sampleSha, parsed.apkSha256)
+        assertTrue(GitHubUpdateRepository.isTrustedReleaseDownloadUrl(parsed.apkDownloadUrl))
+        assertTrue(
+            GitHubUpdateRepository.isRemoteNewer(
+                parsed,
+                InstalledVersionInfo(versionName = "1.0.4", versionCode = 5L)
+            )
+        )
+    }
+
+    @Test
+    fun `update check bus emission immediately surfaces update available inside app`() {
+        composeRule.setContent {
+            VoiceRecorderTheme {
+                VoiceRecorderApp()
+            }
+        }
+        composeRule.waitForIdle()
+
+        val newRelease = GitHubReleaseInfo(
+            tagName = "v1.0.9-build.99",
+            releaseName = "Voice Recorder v1.0.9",
+            versionName = "1.0.9",
+            versionCode = 10L,
+            releaseNotes = "Instant update available verification",
+            publishedAt = "2026-11-26T06:00:00Z",
+            apkAssetName = "voice-recorder-v1.0.9-release.apk",
+            apkDownloadUrl = "https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/download/v1.0.9-build.99/voice-recorder-v1.0.9-release.apk",
+            apkSizeBytes = 20_000_000L,
+            apkSha256 = "b".repeat(64)
+        )
+        com.android.abdullah.voicerecorder.mp3.service.UpdateCheckEventBus.emit(newRelease)
+        composeRule.waitForIdle()
+
+        // Immediately opens Update Available screen when idle
+        composeRule.onNodeWithTag("update_release_title").assertIsDisplayed()
+        composeRule.onNodeWithTag("update_back_button").performClick()
+        composeRule.waitForIdle()
+
+        // After dismissing, in-app Update Available banner stays visible inside main screen
+        composeRule.onNodeWithTag("in_app_update_banner").assertIsDisplayed()
+        composeRule.onNodeWithText("Update Available • v1.0.9").assertIsDisplayed()
+        composeRule.onNodeWithTag("in_app_update_banner_button").assertIsDisplayed()
     }
 }

@@ -10,15 +10,12 @@ data class GitHubReleaseInfo(
     val apkAssetName: String,
     val apkDownloadUrl: String,
     val apkSizeBytes: Long,
-    val htmlUrl: String = ""
+    val htmlUrl: String = "",
+    val apkSha256: String? = null
 )
 
 sealed interface UpdateUiState {
     data object Idle : UpdateUiState
-
-    data class RepoNotConfigured(
-        val currentVersion: String
-    ) : UpdateUiState
 
     data class Checking(
         val currentVersion: String

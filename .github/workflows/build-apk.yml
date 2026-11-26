@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "**"
+      - "!update-feed"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -153,8 +154,6 @@ jobs:
             "$AAPT2" compile --dir "$res_dir" -o "build/compiled_res/aar_${idx}.zip"
             idx=$((idx + 1))
           done < build/deps/res_dirs.txt
-
-          python3 -c 'import os, re; from pathlib import Path; from xml.sax.saxutils import escape; repo = os.environ.get("GITHUB_REPOSITORY", "").strip(); p = Path("app/src/main/res/values/strings.xml"); p.write_text(re.sub(r"(<string\s+name=\"github_repo\"[^>]*>).*?(</string>)", lambda m: m.group(1) + escape(repo) + m.group(2), p.read_text(encoding="utf-8"), count=1, flags=re.DOTALL), encoding="utf-8") if repo else None'
 
           "$AAPT2" compile --dir app/src/main/res -o build/compiled_res/app.zip
 
@@ -337,8 +336,6 @@ jobs:
             "$AAPT2" compile --dir "$res_dir" -o "build/compiled_res/aar_${idx}.zip"
             idx=$((idx + 1))
           done < build/deps/res_dirs.txt
-
-          python3 -c 'import os, re; from pathlib import Path; from xml.sax.saxutils import escape; repo = os.environ.get("GITHUB_REPOSITORY", "").strip(); p = Path("app/src/main/res/values/strings.xml"); p.write_text(re.sub(r"(<string\s+name=\"github_repo\"[^>]*>).*?(</string>)", lambda m: m.group(1) + escape(repo) + m.group(2), p.read_text(encoding="utf-8"), count=1, flags=re.DOTALL), encoding="utf-8") if repo else None'
 
           "$AAPT2" compile --dir app/src/main/res -o build/compiled_res/app.zip
 
@@ -595,13 +592,15 @@ jobs:
             cat "$NOTES_FILE" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Publish Signed APK to GitHub Release
+      - name: Publish Signed APK & Update Feed Manifest to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
           INPUT_RELEASE_NAME: ${{ inputs.release_name }}
           INPUT_RELEASE_MODE: ${{ inputs.release_mode }}
           VERSION_NAME: ${{ needs.compile-kotlin-dex.outputs.version_name }}
+          VERSION_CODE: ${{ needs.compile-kotlin-dex.outputs.version_code }}
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           CLEAN_TAG="$(printf '%s' "$INPUT_RELEASE_TAG" | xargs || true)"
           CLEAN_NAME="$(printf '%s' "$INPUT_RELEASE_NAME" | xargs || true)"
@@ -619,10 +618,59 @@ jobs:
             exit 1
           fi
           NOTES_FILE="build/release_notes.md"
+          MANIFEST_FILE="build/update-manifest.json"
+
+          python3 - "$APK_FILE" "$NOTES_FILE" "$MANIFEST_FILE" "$TAG" "$NAME" "$VERSION_NAME" "$VERSION_CODE" "$GITHUB_REPO" <<'PYEOF'
+          import datetime
+          import hashlib
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          from urllib.parse import quote
+
+          apk_path, notes_path, manifest_path, tag, name, ver_name, ver_code, repo = sys.argv[1:9]
+          apk_file = Path(apk_path)
+          apk_basename = apk_file.name
+          apk_size = apk_file.stat().st_size
+
+          sha256 = hashlib.sha256()
+          with apk_file.open("rb") as f:
+              for chunk in iter(lambda: f.read(65536), b""):
+                  sha256.update(chunk)
+          apk_sha256 = sha256.hexdigest()
+
+          notes = ""
+          if Path(notes_path).is_file():
+              notes = Path(notes_path).read_text(encoding="utf-8").strip()
+
+          encoded_tag = quote(tag, safe="")
+          encoded_asset = quote(apk_basename, safe="")
+          published_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          manifest = {
+              "schema_version": 1,
+              "repository": repo,
+              "tag_name": tag,
+              "release_name": name,
+              "version_name": ver_name,
+              "version_code": int(ver_code),
+              "release_notes": notes,
+              "published_at": published_at,
+              "apk_asset_name": apk_basename,
+              "apk_download_url": f"https://github.com/{repo}/releases/download/{encoded_tag}/{encoded_asset}",
+              "apk_size_bytes": apk_size,
+              "apk_sha256": apk_sha256,
+              "html_url": f"https://github.com/{repo}/releases/tag/{encoded_tag}",
+          }
+
+          Path(manifest_path).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          print(f"Generated update manifest: {manifest_path} (size={apk_size}, sha256={apk_sha256})")
+          PYEOF
 
           publish_release() {
             if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release upload "$TAG" "$APK_FILE" --clobber || return $?
+              gh release upload "$TAG" "$APK_FILE" "$MANIFEST_FILE" --clobber || return $?
               if [ -f "$NOTES_FILE" ]; then
                 gh release edit "$TAG" --title "$NAME" --notes-file "$NOTES_FILE" || true
               fi
@@ -637,11 +685,11 @@ jobs:
             fi
 
             if [ -f "$NOTES_FILE" ]; then
-              gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --notes-file "$NOTES_FILE" || \
-                gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --notes "Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})"
+              gh release create "$TAG" "$APK_FILE" "$MANIFEST_FILE" "${FLAGS[@]}" --notes-file "$NOTES_FILE" || \
+                gh release create "$TAG" "$APK_FILE" "$MANIFEST_FILE" "${FLAGS[@]}" --notes "Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})"
             else
-              gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --generate-notes || \
-                gh release create "$TAG" "$APK_FILE" "${FLAGS[@]}" --notes "Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})"
+              gh release create "$TAG" "$APK_FILE" "$MANIFEST_FILE" "${FLAGS[@]}" --generate-notes || \
+                gh release create "$TAG" "$APK_FILE" "$MANIFEST_FILE" "${FLAGS[@]}" --notes "Voice Recorder v${VERSION_NAME} (Build #${{ github.run_number }})"
             fi
           }
 
@@ -654,4 +702,23 @@ jobs:
             exit 1
           else
             echo "$OUTPUT"
+          fi
+
+          if [ "$INPUT_RELEASE_MODE" = "published" ] && [ -f "$MANIFEST_FILE" ]; then
+            FEED_TMP="$(mktemp -d)"
+            cp "$MANIFEST_FILE" "$FEED_TMP/update-manifest.json"
+            if (
+              cd "$FEED_TMP"
+              git init -q -b update-feed
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add update-manifest.json
+              git commit -q -m "Publish rate-limit-free update manifest for $TAG [skip ci]"
+              git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPO}.git" update-feed:refs/heads/update-feed
+            ); then
+              echo "Updated rate-limit-free CDN manifest on update-feed branch."
+            else
+              echo "::warning::Could not update update-feed branch; GitHub Release update-manifest.json asset remains active."
+            fi
+            rm -rf "$FEED_TMP"
           fi

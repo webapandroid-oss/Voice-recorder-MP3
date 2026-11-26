@@ -2,24 +2,37 @@ package com.android.abdullah.voicerecorder.mp3.ui
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,22 +45,30 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.android.abdullah.voicerecorder.mp3.R
@@ -57,13 +78,17 @@ import com.android.abdullah.voicerecorder.mp3.ui.components.QualitySettingsSheet
 import com.android.abdullah.voicerecorder.mp3.ui.screens.LibraryScreen
 import com.android.abdullah.voicerecorder.mp3.ui.screens.RecordScreen
 import com.android.abdullah.voicerecorder.mp3.ui.screens.UpdateScreen
+import com.android.abdullah.voicerecorder.mp3.ui.theme.CyanAccent
+import com.android.abdullah.voicerecorder.mp3.ui.theme.EmeraldClean
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceRecorderApp(
+    openUpdatesSignal: Int = 0,
     viewModel: VoiceRecorderViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val liveRecordingState by viewModel.liveRecordingState.collectAsStateWithLifecycle()
     val qualityConfig by viewModel.qualityConfig.collectAsStateWithLifecycle()
     val recordings by viewModel.filteredRecordings.collectAsStateWithLifecycle()
@@ -86,6 +111,24 @@ fun VoiceRecorderApp(
     ) { uri ->
         if (uri != null) {
             viewModel.convertAudioUriToMp3(uri)
+        }
+    }
+
+    LaunchedEffect(openUpdatesSignal) {
+        if (openUpdatesSignal > 0) {
+            viewModel.openUpdateScreen()
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                viewModel.onAppForegrounded()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -121,13 +164,11 @@ fun VoiceRecorderApp(
             configuredRepo = configuredRepo,
             onBack = viewModel::dismissUpdateScreen,
             onCheckAgain = { viewModel.checkForUpdates(autoOpenIfAvailable = false) },
-            onSaveRepoAndCheck = viewModel::saveRepoAndCheck,
             onDownloadUpdate = viewModel::downloadUpdate,
             onCancelDownload = viewModel::cancelDownload,
             onInstallNow = viewModel::onInstallNowClicked,
             onRequestUnknownSourcePermission = viewModel::onRequestUnknownSourcePermission,
-            onRefreshInstallPermission = viewModel::refreshInstallPermissionState,
-            onEditRepo = viewModel::openRepoConfiguration
+            onRefreshInstallPermission = viewModel::refreshInstallPermissionState
         )
         return
     }
@@ -284,110 +325,208 @@ fun VoiceRecorderApp(
                 }
             }
         ) { innerPadding ->
-            if (isExpandedLayout) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                    ) {
-                        RecordScreen(
-                            liveState = liveRecordingState,
-                            draftTitle = draftTitle,
-                            onDraftTitleChange = viewModel::updateDraftTitle,
-                            onStartRecording = viewModel::startRecording,
-                            onPauseRecording = viewModel::pauseRecording,
-                            onResumeRecording = viewModel::resumeRecording,
-                            onStopAndSave = viewModel::stopAndSaveRecording,
-                            onDiscard = viewModel::discardRecording
-                        )
-                    }
-
-                    VerticalDivider(
-                        thickness = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                    ) {
-                        LibraryScreen(
-                            recordings = recordings,
-                            searchQuery = searchQuery,
-                            sortOrder = sortOrder,
-                            playbackState = playbackState,
-                            isConvertingMp3 = isConvertingMp3,
-                            onSearchQueryChange = viewModel::updateSearchQuery,
-                            onSortOrderChange = viewModel::updateSortOrder,
-                            onTogglePlay = viewModel::togglePlayback,
-                            onSeekTo = viewModel::seekTo,
-                            onSkipBy = viewModel::skipBy,
-                            onCycleSpeed = viewModel::cyclePlaybackSpeed,
-                            onRename = viewModel::renameRecording,
-                            onShare = { rec ->
-                                viewModel.buildShareIntent(rec)?.let { shareIntent ->
-                                    context.startActivity(
-                                        Intent.createChooser(shareIntent, "Share")
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                val bannerRelease = when (val st = updateState) {
+                    is UpdateUiState.Available -> st.release
+                    is UpdateUiState.ReadyToInstall -> st.release
+                    else -> null
+                }
+                AnimatedVisibility(visible = bannerRelease != null) {
+                    if (bannerRelease != null) {
+                        val isReadyToInstall = updateState is UpdateUiState.ReadyToInstall
+                        Surface(
+                            color = if (isReadyToInstall) {
+                                EmeraldClean.copy(alpha = 0.14f)
+                            } else {
+                                CyanAccent.copy(alpha = 0.12f)
+                            },
+                            border = BorderStroke(
+                                1.dp,
+                                if (isReadyToInstall) {
+                                    EmeraldClean.copy(alpha = 0.45f)
+                                } else {
+                                    CyanAccent.copy(alpha = 0.45f)
+                                }
+                            ),
+                            shape = MaterialTheme.shapes.medium,
+                            onClick = viewModel::openUpdateScreen,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .testTag("in_app_update_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.NewReleases,
+                                    contentDescription = null,
+                                    tint = if (isReadyToInstall) EmeraldClean else CyanAccent,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(
+                                            R.string.update_banner_title,
+                                            bannerRelease.versionName
+                                        ),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = stringResource(
+                                            if (isReadyToInstall) {
+                                                R.string.update_banner_ready_subtitle
+                                            } else {
+                                                R.string.update_banner_subtitle
+                                            }
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                            },
-                            onExport = viewModel::exportToDevice,
-                            onDelete = viewModel::deleteRecording,
-                            onConvertToMp3 = { convertPickerLauncher.launch(arrayOf("audio/*")) }
-                        )
+                                Button(
+                                    onClick = viewModel::openUpdateScreen,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isReadyToInstall) EmeraldClean else CyanAccent,
+                                        contentColor = MaterialTheme.colorScheme.onSecondary
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                    modifier = Modifier
+                                        .height(40.dp)
+                                        .testTag("in_app_update_banner_button")
+                                ) {
+                                    Text(
+                                        text = stringResource(
+                                            if (isReadyToInstall) {
+                                                R.string.update_banner_install_action
+                                            } else {
+                                                R.string.update_banner_action
+                                            }
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
-            } else {
+
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
+                        .weight(1f)
+                        .fillMaxWidth()
                 ) {
-                    when (currentDestination) {
-                        MainDestination.RECORD -> {
-                            RecordScreen(
-                                liveState = liveRecordingState,
-                                draftTitle = draftTitle,
-                                onDraftTitleChange = viewModel::updateDraftTitle,
-                                onStartRecording = viewModel::startRecording,
-                                onPauseRecording = viewModel::pauseRecording,
-                                onResumeRecording = viewModel::resumeRecording,
-                                onStopAndSave = viewModel::stopAndSaveRecording,
-                                onDiscard = viewModel::discardRecording
+                    if (isExpandedLayout) {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                            ) {
+                                RecordScreen(
+                                    liveState = liveRecordingState,
+                                    draftTitle = draftTitle,
+                                    onDraftTitleChange = viewModel::updateDraftTitle,
+                                    onStartRecording = viewModel::startRecording,
+                                    onPauseRecording = viewModel::pauseRecording,
+                                    onResumeRecording = viewModel::resumeRecording,
+                                    onStopAndSave = viewModel::stopAndSaveRecording,
+                                    onDiscard = viewModel::discardRecording
+                                )
+                            }
+
+                            VerticalDivider(
+                                thickness = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant
                             )
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                            ) {
+                                LibraryScreen(
+                                    recordings = recordings,
+                                    searchQuery = searchQuery,
+                                    sortOrder = sortOrder,
+                                    playbackState = playbackState,
+                                    isConvertingMp3 = isConvertingMp3,
+                                    onSearchQueryChange = viewModel::updateSearchQuery,
+                                    onSortOrderChange = viewModel::updateSortOrder,
+                                    onTogglePlay = viewModel::togglePlayback,
+                                    onSeekTo = viewModel::seekTo,
+                                    onSkipBy = viewModel::skipBy,
+                                    onCycleSpeed = viewModel::cyclePlaybackSpeed,
+                                    onRename = viewModel::renameRecording,
+                                    onShare = { rec ->
+                                        viewModel.buildShareIntent(rec)?.let { shareIntent ->
+                                            context.startActivity(
+                                                Intent.createChooser(shareIntent, "Share")
+                                            )
+                                        }
+                                    },
+                                    onExport = viewModel::exportToDevice,
+                                    onDelete = viewModel::deleteRecording,
+                                    onConvertToMp3 = { convertPickerLauncher.launch(arrayOf("audio/*")) }
+                                )
+                            }
                         }
-                        MainDestination.LIBRARY -> {
-                            LibraryScreen(
-                                recordings = recordings,
-                                searchQuery = searchQuery,
-                                sortOrder = sortOrder,
-                                playbackState = playbackState,
-                                isConvertingMp3 = isConvertingMp3,
-                                onSearchQueryChange = viewModel::updateSearchQuery,
-                                onSortOrderChange = viewModel::updateSortOrder,
-                                onTogglePlay = viewModel::togglePlayback,
-                                onSeekTo = viewModel::seekTo,
-                                onSkipBy = viewModel::skipBy,
-                                onCycleSpeed = viewModel::cyclePlaybackSpeed,
-                                onRename = viewModel::renameRecording,
-                                onShare = { rec ->
-                                    viewModel.buildShareIntent(rec)?.let { shareIntent ->
-                                        context.startActivity(
-                                            Intent.createChooser(shareIntent, "Share")
-                                        )
-                                    }
-                                },
-                                onExport = viewModel::exportToDevice,
-                                onDelete = viewModel::deleteRecording,
-                                onConvertToMp3 = { convertPickerLauncher.launch(arrayOf("audio/*")) },
-                                onGoToRecord = { currentDestination = MainDestination.RECORD }
-                            )
+                    } else {
+                        when (currentDestination) {
+                            MainDestination.RECORD -> {
+                                RecordScreen(
+                                    liveState = liveRecordingState,
+                                    draftTitle = draftTitle,
+                                    onDraftTitleChange = viewModel::updateDraftTitle,
+                                    onStartRecording = viewModel::startRecording,
+                                    onPauseRecording = viewModel::pauseRecording,
+                                    onResumeRecording = viewModel::resumeRecording,
+                                    onStopAndSave = viewModel::stopAndSaveRecording,
+                                    onDiscard = viewModel::discardRecording
+                                )
+                            }
+                            MainDestination.LIBRARY -> {
+                                LibraryScreen(
+                                    recordings = recordings,
+                                    searchQuery = searchQuery,
+                                    sortOrder = sortOrder,
+                                    playbackState = playbackState,
+                                    isConvertingMp3 = isConvertingMp3,
+                                    onSearchQueryChange = viewModel::updateSearchQuery,
+                                    onSortOrderChange = viewModel::updateSortOrder,
+                                    onTogglePlay = viewModel::togglePlayback,
+                                    onSeekTo = viewModel::seekTo,
+                                    onSkipBy = viewModel::skipBy,
+                                    onCycleSpeed = viewModel::cyclePlaybackSpeed,
+                                    onRename = viewModel::renameRecording,
+                                    onShare = { rec ->
+                                        viewModel.buildShareIntent(rec)?.let { shareIntent ->
+                                            context.startActivity(
+                                                Intent.createChooser(shareIntent, "Share")
+                                            )
+                                        }
+                                    },
+                                    onExport = viewModel::exportToDevice,
+                                    onDelete = viewModel::deleteRecording,
+                                    onConvertToMp3 = { convertPickerLauncher.launch(arrayOf("audio/*")) },
+                                    onGoToRecord = { currentDestination = MainDestination.RECORD }
+                                )
+                            }
                         }
                     }
                 }

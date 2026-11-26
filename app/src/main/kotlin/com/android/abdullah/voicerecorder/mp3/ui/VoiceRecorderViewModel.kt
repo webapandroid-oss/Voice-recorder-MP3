@@ -30,8 +30,12 @@ import com.android.abdullah.voicerecorder.mp3.model.UpdateUiState
 import com.android.abdullah.voicerecorder.mp3.service.LiveRecordingState
 import com.android.abdullah.voicerecorder.mp3.service.Mp3RecordingService
 import com.android.abdullah.voicerecorder.mp3.service.RecordingEvent
+import com.android.abdullah.voicerecorder.mp3.service.UpdateCheckEventBus
+import com.android.abdullah.voicerecorder.mp3.service.UpdateCheckJobService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -63,10 +67,13 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     private var serviceStateJob: Job? = null
     private var serviceEventsJob: Job? = null
     private var updateCheckJob: Job? = null
+    private var periodicUpdateJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var updateInstallJob: Job? = null
     private var isBound = false
     private var pendingInstallAfterPermission = false
+    private var lastUpdateCheckAtMs = 0L
+    private var lastAutoOpenedTag: String? = null
 
     private val _liveRecordingState = MutableStateFlow(LiveRecordingState())
     val liveRecordingState: StateFlow<LiveRecordingState> = _liveRecordingState.asStateFlow()
@@ -126,16 +133,9 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     private val _unknownSourceIntentEvents = MutableSharedFlow<Intent>(extraBufferCapacity = 4)
     val unknownSourceIntentEvents: SharedFlow<Intent> = _unknownSourceIntentEvents.asSharedFlow()
 
-    val configuredRepo: StateFlow<String> = settingsRepository.githubRepoFlow
-        .map { saved ->
-            val bundled = context.getString(R.string.github_repo).trim()
-            saved.trim().ifBlank { bundled }
-        }
-        .stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5000),
-            context.getString(R.string.github_repo).trim()
-        )
+    val configuredRepo: StateFlow<String> = MutableStateFlow(
+        GitHubUpdateRepository.TRUSTED_GITHUB_REPO
+    ).asStateFlow()
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -156,7 +156,57 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         refreshRecordings()
         bindRecordingService()
         observeInstallSessionEvents()
+        observeBackgroundUpdateBus()
+        UpdateCheckJobService.schedulePeriodicChecks(context)
         checkForUpdates(autoOpenIfAvailable = true)
+        startPeriodicBackgroundChecks()
+    }
+
+    private fun observeBackgroundUpdateBus() {
+        viewModelScope.launch {
+            UpdateCheckEventBus.updates.collect { release ->
+                val installed = updateRepository.getInstalledVersion()
+                applyUpdateAvailable(
+                    installedVersion = installed.versionName,
+                    release = release,
+                    autoOpenIfAvailable = true
+                )
+            }
+        }
+    }
+
+    private fun startPeriodicBackgroundChecks() {
+        periodicUpdateJob?.cancel()
+        periodicUpdateJob = viewModelScope.launch {
+            while (isActive) {
+                delay(BACKGROUND_CHECK_INTERVAL_MS)
+                val state = _updateState.value
+                if (state !is UpdateUiState.Checking &&
+                    state !is UpdateUiState.Downloading &&
+                    state !is UpdateUiState.Installing
+                ) {
+                    checkForUpdates(
+                        autoOpenIfAvailable = _liveRecordingState.value.status == RecorderStatus.IDLE,
+                        silent = true
+                    )
+                }
+            }
+        }
+    }
+
+    fun onAppForegrounded() {
+        val elapsed = System.currentTimeMillis() - lastUpdateCheckAtMs
+        val state = _updateState.value
+        if (elapsed >= FOREGROUND_CHECK_COOLDOWN_MS &&
+            state !is UpdateUiState.Checking &&
+            state !is UpdateUiState.Downloading &&
+            state !is UpdateUiState.Installing
+        ) {
+            checkForUpdates(
+                autoOpenIfAvailable = _liveRecordingState.value.status == RecorderStatus.IDLE,
+                silent = true
+            )
+        }
     }
 
     private fun observeInstallSessionEvents() {
@@ -418,7 +468,6 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         val state = _updateState.value
         if (state is UpdateUiState.Idle ||
             state is UpdateUiState.UpToDate ||
-            state is UpdateUiState.RepoNotConfigured ||
             (state is UpdateUiState.Error && state.release == null)
         ) {
             checkForUpdates(autoOpenIfAvailable = false)
@@ -429,66 +478,28 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         _showUpdateScreen.value = false
     }
 
-    fun openRepoConfiguration() {
-        updateCheckJob?.cancel()
-        updateDownloadJob?.cancel()
-        pendingInstallAfterPermission = false
-        val installed = updateRepository.getInstalledVersion()
-        _updateState.value = UpdateUiState.RepoNotConfigured(installed.versionName)
-    }
-
-    fun saveRepoAndCheck(rawRepo: String) {
-        val slug = GitHubUpdateRepository.normalizeRepoSlug(rawRepo)
-        if (slug == null) {
-            _uiMessages.tryEmit("Enter a valid repository like owner/repo")
-            return
-        }
-        updateDownloadJob?.cancel()
-        pendingInstallAfterPermission = false
-        viewModelScope.launch {
-            settingsRepository.updateGithubRepo(slug)
-            checkForUpdates(autoOpenIfAvailable = false, explicitRepo = slug)
-        }
-    }
-
-    fun checkForUpdates(autoOpenIfAvailable: Boolean = false, explicitRepo: String? = null) {
+    fun checkForUpdates(
+        autoOpenIfAvailable: Boolean = false,
+        silent: Boolean = false
+    ) {
         updateCheckJob?.cancel()
         updateCheckJob = viewModelScope.launch {
+            lastUpdateCheckAtMs = System.currentTimeMillis()
             val installed = updateRepository.getInstalledVersion()
-            val bundledRepo = context.getString(R.string.github_repo).trim()
-            val savedRepo = settingsRepository.githubRepoFlow.first().trim()
-            val repo = explicitRepo?.trim()?.ifBlank { null }
-                ?: savedRepo.ifBlank { bundledRepo }
 
-            if (repo.isBlank()) {
-                _updateState.value = UpdateUiState.RepoNotConfigured(installed.versionName)
-                return@launch
+            if (!silent) {
+                _updateState.value = UpdateUiState.Checking(installed.versionName)
             }
-
-            _updateState.value = UpdateUiState.Checking(installed.versionName)
             runCatching {
-                updateRepository.checkLatestRelease(repo)
+                updateRepository.checkLatestRelease(GitHubUpdateRepository.TRUSTED_GITHUB_REPO)
             }.onSuccess { result ->
                 when (result) {
                     is ReleaseCheckResult.UpdateAvailable -> {
-                        val cachedApk = updateRepository.findValidDownloadedApk(result.release)
-                        if (cachedApk != null) {
-                            _updateState.value = UpdateUiState.ReadyToInstall(
-                                currentVersion = installed.versionName,
-                                release = result.release,
-                                apkFilePath = cachedApk.absolutePath,
-                                needsUnknownSourcePermission = !updateRepository.canRequestPackageInstalls(),
-                                signatureMismatch = !updateRepository.hasCompatibleSigningCertificate(cachedApk)
-                            )
-                        } else {
-                            _updateState.value = UpdateUiState.Available(
-                                currentVersion = installed.versionName,
-                                release = result.release
-                            )
-                        }
-                        if (autoOpenIfAvailable) {
-                            _showUpdateScreen.value = true
-                        }
+                        applyUpdateAvailable(
+                            installedVersion = installed.versionName,
+                            release = result.release,
+                            autoOpenIfAvailable = autoOpenIfAvailable
+                        )
                     }
                     is ReleaseCheckResult.UpToDate -> {
                         _updateState.value = UpdateUiState.UpToDate(
@@ -499,11 +510,46 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
                 }
             }.onFailure { err ->
                 if (err is CancellationException) throw err
-                _updateState.value = UpdateUiState.Error(
-                    currentVersion = installed.versionName,
-                    message = err.message ?: "Unable to check GitHub Releases."
-                )
+                if (!silent) {
+                    _updateState.value = UpdateUiState.Error(
+                        currentVersion = installed.versionName,
+                        message = err.message ?: "Unable to check GitHub Releases."
+                    )
+                }
             }
+        }
+    }
+
+    private fun applyUpdateAvailable(
+        installedVersion: String,
+        release: GitHubReleaseInfo,
+        autoOpenIfAvailable: Boolean
+    ) {
+        val current = _updateState.value
+        if (current is UpdateUiState.Downloading || current is UpdateUiState.Installing) {
+            return
+        }
+        val cachedApk = updateRepository.findValidDownloadedApk(release)
+        if (cachedApk != null) {
+            _updateState.value = UpdateUiState.ReadyToInstall(
+                currentVersion = installedVersion,
+                release = release,
+                apkFilePath = cachedApk.absolutePath,
+                needsUnknownSourcePermission = !updateRepository.canRequestPackageInstalls(),
+                signatureMismatch = !updateRepository.hasCompatibleSigningCertificate(cachedApk)
+            )
+        } else {
+            _updateState.value = UpdateUiState.Available(
+                currentVersion = installedVersion,
+                release = release
+            )
+        }
+        if (autoOpenIfAvailable &&
+            _liveRecordingState.value.status == RecorderStatus.IDLE &&
+            lastAutoOpenedTag != release.tagName
+        ) {
+            lastAutoOpenedTag = release.tagName
+            _showUpdateScreen.value = true
         }
     }
 
@@ -625,6 +671,16 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         release: GitHubReleaseInfo,
         apkFile: File
     ) {
+        if (!GitHubUpdateRepository.isTrustedReleaseDownloadUrl(release.apkDownloadUrl) ||
+            !updateRepository.isValidUpdateApk(apkFile)
+        ) {
+            _updateState.value = UpdateUiState.Error(
+                currentVersion = currentVersion,
+                message = "Update APK failed integrity or signature verification.",
+                release = release
+            )
+            return
+        }
         updateInstallJob?.cancel()
         updateInstallJob = viewModelScope.launch {
             _updateState.value = UpdateUiState.Installing(
@@ -652,6 +708,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     override fun onCleared() {
         super.onCleared()
         updateCheckJob?.cancel()
+        periodicUpdateJob?.cancel()
         updateDownloadJob?.cancel()
         updateInstallJob?.cancel()
         audioPlayer.release()
@@ -662,5 +719,10 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
             }
             isBound = false
         }
+    }
+
+    companion object {
+        private const val BACKGROUND_CHECK_INTERVAL_MS = 60L * 1000L
+        private const val FOREGROUND_CHECK_COOLDOWN_MS = 30L * 1000L
     }
 }

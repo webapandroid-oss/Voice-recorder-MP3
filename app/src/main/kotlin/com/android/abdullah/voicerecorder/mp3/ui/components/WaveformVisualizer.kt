@@ -67,12 +67,14 @@ fun StudioWaveformCard(
                     .fillMaxWidth()
                     .height(148.dp)
             ) {
+                val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+                val idleWaveColor = MaterialTheme.colorScheme.secondary
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val width = size.width
                     val height = size.height
                     val centerY = height / 2f
 
-                    val gridColor = Color.White.copy(alpha = 0.05f)
+                    val gridColor = onSurfaceColor.copy(alpha = 0.08f)
                     drawLine(
                         color = gridColor,
                         start = Offset(0f, centerY),
@@ -106,11 +108,11 @@ fun StudioWaveformCard(
                         val barHeight = halfHeight * 2f
 
                         val barColor = when {
-                            status == RecorderStatus.IDLE -> CyanAccent.copy(alpha = 0.28f)
-                            status == RecorderStatus.PAUSED -> AmberMeter.copy(alpha = 0.45f)
+                            status == RecorderStatus.IDLE -> idleWaveColor.copy(alpha = 0.30f)
+                            status == RecorderStatus.PAUSED -> AmberMeter.copy(alpha = 0.55f)
                             sample > 0.85f -> CoralRecord
                             sample > 0.58f -> CoralSoft
-                            else -> Color(0xFFE5E7EB).copy(alpha = 0.88f)
+                            else -> onSurfaceColor.copy(alpha = 0.80f)
                         }
 
                         drawRoundRect(

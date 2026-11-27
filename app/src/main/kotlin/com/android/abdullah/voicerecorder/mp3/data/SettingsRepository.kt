@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.android.abdullah.voicerecorder.mp3.model.AppThemeMode
 import com.android.abdullah.voicerecorder.mp3.model.Mp3Bitrate
 import com.android.abdullah.voicerecorder.mp3.model.Mp3ChannelMode
 import com.android.abdullah.voicerecorder.mp3.model.Mp3SampleRate
@@ -27,6 +28,7 @@ class SettingsRepository(private val context: Context) {
         val SORT_ORDER = stringPreferencesKey("sort_order")
         val STORAGE_LOCATION = stringPreferencesKey("storage_location")
         val SD_CARD_TREE_URI = stringPreferencesKey("sd_card_tree_uri")
+        val APP_THEME = stringPreferencesKey("app_theme")
     }
 
     val qualityConfigFlow: Flow<RecordingQualityConfig> = context.recorderDataStore.data.map { prefs ->
@@ -49,6 +51,11 @@ class SettingsRepository(private val context: Context) {
 
     val sdCardTreeUriFlow: Flow<String?> = context.recorderDataStore.data.map { prefs ->
         prefs[Keys.SD_CARD_TREE_URI]
+    }
+
+    val appThemeFlow: Flow<AppThemeMode> = context.recorderDataStore.data.map { prefs ->
+        val saved = prefs[Keys.APP_THEME]
+        AppThemeMode.entries.find { it.name == saved } ?: AppThemeMode.DARK
     }
 
     suspend fun updateBitrate(bitrate: Mp3Bitrate) {
@@ -88,6 +95,12 @@ class SettingsRepository(private val context: Context) {
             } else {
                 prefs[Keys.SD_CARD_TREE_URI] = treeUri
             }
+        }
+    }
+
+    suspend fun updateAppTheme(themeMode: AppThemeMode) {
+        context.recorderDataStore.edit { prefs ->
+            prefs[Keys.APP_THEME] = themeMode.name
         }
     }
 }

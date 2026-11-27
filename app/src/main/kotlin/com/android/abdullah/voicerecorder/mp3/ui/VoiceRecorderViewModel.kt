@@ -17,6 +17,7 @@ import com.android.abdullah.voicerecorder.mp3.data.RecordingsRepository
 import com.android.abdullah.voicerecorder.mp3.data.ReleaseCheckResult
 import com.android.abdullah.voicerecorder.mp3.data.SdCardInfo
 import com.android.abdullah.voicerecorder.mp3.data.SettingsRepository
+import com.android.abdullah.voicerecorder.mp3.model.AppThemeMode
 import com.android.abdullah.voicerecorder.mp3.model.GitHubReleaseInfo
 import com.android.abdullah.voicerecorder.mp3.model.Mp3Bitrate
 import com.android.abdullah.voicerecorder.mp3.model.Mp3ChannelMode
@@ -91,6 +92,10 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     val storageLocation: StateFlow<StorageLocation> = settingsRepository.storageLocationFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StorageLocation.INTERNAL)
 
+    private val _appTheme = MutableStateFlow(AppThemeMode.DARK)
+    val appTheme: StateFlow<AppThemeMode> = _appTheme.asStateFlow()
+    private var hasUserChangedTheme = false
+
     val sdCardTreeUri: StateFlow<String?> = settingsRepository.sdCardTreeUriFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
@@ -146,15 +151,14 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     private val _showUpdateScreen = MutableStateFlow(false)
     val showUpdateScreen: StateFlow<Boolean> = _showUpdateScreen.asStateFlow()
 
+    private val _showSettingsScreen = MutableStateFlow(false)
+    val showSettingsScreen: StateFlow<Boolean> = _showSettingsScreen.asStateFlow()
+
     private val _installIntentEvents = MutableSharedFlow<Intent>(extraBufferCapacity = 4)
     val installIntentEvents: SharedFlow<Intent> = _installIntentEvents.asSharedFlow()
 
     private val _unknownSourceIntentEvents = MutableSharedFlow<Intent>(extraBufferCapacity = 4)
     val unknownSourceIntentEvents: SharedFlow<Intent> = _unknownSourceIntentEvents.asSharedFlow()
-
-    val configuredRepo: StateFlow<String> = MutableStateFlow(
-        GitHubUpdateRepository.TRUSTED_GITHUB_REPO
-    ).asStateFlow()
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -172,19 +176,27 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     }
 
     init {
+        viewModelScope.launch {
+            settingsRepository.appThemeFlow.collect { saved ->
+                if (!hasUserChangedTheme) {
+                    _appTheme.value = saved
+                }
+            }
+        }
         refreshSdCardStatus(promptIfNeeded = true)
         refreshRecordings()
         bindRecordingService()
         observeInstallSessionEvents()
         observeBackgroundUpdateBus()
         UpdateCheckJobService.schedulePeriodicChecks(context)
-        checkForUpdates(autoOpenIfAvailable = true)
+        checkForUpdates(autoOpenIfAvailable = true, silent = true)
         startPeriodicBackgroundChecks()
     }
 
     private fun observeBackgroundUpdateBus() {
         viewModelScope.launch {
             UpdateCheckEventBus.updates.collect { release ->
+                updateCheckJob?.cancel()
                 val installed = updateRepository.getInstalledVersion()
                 applyUpdateAvailable(
                     installedVersion = installed.versionName,
@@ -487,6 +499,22 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun updateAppTheme(themeMode: AppThemeMode) {
+        hasUserChangedTheme = true
+        _appTheme.value = themeMode
+        viewModelScope.launch {
+            settingsRepository.updateAppTheme(themeMode)
+        }
+    }
+
+    fun openSettingsScreen() {
+        _showSettingsScreen.value = true
+    }
+
+    fun dismissSettingsScreen() {
+        _showSettingsScreen.value = false
+    }
+
     fun refreshRecordings() {
         viewModelScope.launch {
             val treeUri = settingsRepository.sdCardTreeUriFlow.first()
@@ -576,6 +604,7 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun openUpdateScreen() {
+        _showSettingsScreen.value = false
         _showUpdateScreen.value = true
         val state = _updateState.value
         if (state is UpdateUiState.Idle ||
@@ -622,7 +651,12 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
                 }
             }.onFailure { err ->
                 if (err is CancellationException) throw err
-                if (!silent) {
+                val current = _updateState.value
+                val hasActiveRelease = current is UpdateUiState.Available ||
+                    current is UpdateUiState.ReadyToInstall ||
+                    current is UpdateUiState.Downloading ||
+                    current is UpdateUiState.Installing
+                if (!silent && !hasActiveRelease) {
                     _updateState.value = UpdateUiState.Error(
                         currentVersion = installed.versionName,
                         message = err.message ?: "Unable to check GitHub Releases."

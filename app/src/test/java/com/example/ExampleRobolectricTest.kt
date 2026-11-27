@@ -48,9 +48,9 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `app version is 1_0_5 with versionCode 6`() {
-        assertEquals(6, BuildConfig.VERSION_CODE)
-        assertEquals("1.0.5", BuildConfig.VERSION_NAME)
+    fun `app version is 1_0_6 with versionCode 7`() {
+        assertEquals(7, BuildConfig.VERSION_CODE)
+        assertEquals("1.0.6", BuildConfig.VERSION_NAME)
     }
 
     @Test
@@ -121,7 +121,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `top right more options menu opens quality settings bottom sheet`() {
+    fun `more options menu shows settings and updates and settings opens quality sheet`() {
         composeRule.setContent {
             VoiceRecorderTheme {
                 VoiceRecorderApp()
@@ -129,8 +129,39 @@ class ExampleRobolectricTest {
         }
 
         composeRule.onNodeWithTag("more_options_button").assertIsDisplayed().performClick()
-        composeRule.onNodeWithTag("menu_quality_settings").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("menu_quality_settings").assertDoesNotExist()
+        composeRule.onNodeWithTag("menu_check_updates").assertIsDisplayed()
+        composeRule.onNodeWithTag("menu_settings").assertIsDisplayed().performClick()
+
+        composeRule.onNodeWithTag("settings_theme_option").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_quality_option").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_github_option").assertIsDisplayed()
+
+        // Quality Settings opens the existing bitrate/sample-rate/channel bottom sheet
+        composeRule.onNodeWithTag("settings_quality_option").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("bitrate_192").assertIsDisplayed()
+    }
+
+    @Test
+    fun `settings theme option switches between light and dark theme`() {
+        composeRule.setContent {
+            VoiceRecorderTheme {
+                VoiceRecorderApp()
+            }
+        }
+
+        composeRule.onNodeWithTag("more_options_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("menu_settings").assertIsDisplayed().performClick()
+
+        composeRule.onNodeWithTag("settings_theme_option").performClick()
+        composeRule.onNodeWithTag("theme_picker_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("theme_option_light").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Light Theme").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("settings_theme_option").performClick()
+        composeRule.onNodeWithTag("theme_option_dark").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Dark Theme").assertIsDisplayed()
     }
 
     @Test
@@ -193,7 +224,6 @@ class ExampleRobolectricTest {
             VoiceRecorderTheme {
                 UpdateScreen(
                     updateState = uiState.value,
-                    configuredRepo = GitHubUpdateRepository.TRUSTED_GITHUB_REPO,
                     onBack = {},
                     onCheckAgain = {},
                     onDownloadUpdate = {},
@@ -208,6 +238,7 @@ class ExampleRobolectricTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("update_repo_input").assertDoesNotExist()
         composeRule.onNodeWithTag("update_change_repo_button").assertDoesNotExist()
+        composeRule.onNodeWithText(GitHubUpdateRepository.TRUSTED_GITHUB_REPO, substring = true).assertDoesNotExist()
         composeRule.onNodeWithText("Line 1: Release note details", substring = true).assertIsDisplayed()
         composeRule.onNodeWithTag("update_primary_action_button").assertIsDisplayed()
         composeRule.onNodeWithText("Download Update").assertIsDisplayed()
@@ -227,6 +258,15 @@ class ExampleRobolectricTest {
 
         uiState.value = UpdateUiState.Installing("1.0.2", sampleRelease, "/tmp/app.apk")
         composeRule.onNodeWithText("Installing Update…").assertIsDisplayed()
+
+        uiState.value = UpdateUiState.Checking("1.0.2")
+        composeRule.onNodeWithText(GitHubUpdateRepository.TRUSTED_GITHUB_REPO, substring = true).assertDoesNotExist()
+
+        uiState.value = UpdateUiState.UpToDate("1.0.2", "1.0.2")
+        composeRule.onNodeWithText(GitHubUpdateRepository.TRUSTED_GITHUB_REPO, substring = true).assertDoesNotExist()
+
+        uiState.value = UpdateUiState.Error("1.0.2", "Network timeout")
+        composeRule.onNodeWithText(GitHubUpdateRepository.TRUSTED_GITHUB_REPO, substring = true).assertDoesNotExist()
     }
 
     @Test

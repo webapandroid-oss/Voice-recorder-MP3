@@ -68,11 +68,11 @@ class GitHubUpdateRepository(private val context: Context) {
         return try {
             val pkgInfo = getPackageInfoCompat(context.packageName, 0)
             InstalledVersionInfo(
-                versionName = pkgInfo?.versionName ?: "1.0.5",
-                versionCode = pkgInfo?.let { PackageInfoCompat.getLongVersionCode(it) } ?: 6L
+                versionName = pkgInfo?.versionName ?: "1.0.6",
+                versionCode = pkgInfo?.let { PackageInfoCompat.getLongVersionCode(it) } ?: 7L
             )
         } catch (_: Exception) {
-            InstalledVersionInfo(versionName = "1.0.5", versionCode = 6L)
+            InstalledVersionInfo(versionName = "1.0.6", versionCode = 7L)
         }
     }
 
@@ -228,7 +228,7 @@ class GitHubUpdateRepository(private val context: Context) {
     suspend fun checkLatestRelease(rawRepo: String = TRUSTED_GITHUB_REPO): ReleaseCheckResult = withContext(Dispatchers.IO) {
         val repoSlug = normalizeRepoSlug(rawRepo)
         if (repoSlug == null || !repoSlug.equals(TRUSTED_GITHUB_REPO, ignoreCase = true)) {
-            throw SecurityException("Updates are restricted to the official repository ($TRUSTED_GITHUB_REPO).")
+            throw SecurityException("Updates are restricted to the official release source.")
         }
 
         val installed = getInstalledVersion()
@@ -272,7 +272,7 @@ class GitHubUpdateRepository(private val context: Context) {
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
     ): File = withContext(Dispatchers.IO) {
         if (!isTrustedReleaseDownloadUrl(downloadUrl)) {
-            throw SecurityException("Blocked untrusted download URL. Only official releases from $TRUSTED_GITHUB_REPO are permitted.")
+            throw SecurityException("Blocked untrusted download URL. Only official releases are permitted.")
         }
 
         val updatesDir = File(context.filesDir, UPDATES_DIR_NAME).apply {
@@ -612,7 +612,7 @@ class GitHubUpdateRepository(private val context: Context) {
                 return cachedRelease
             }
             if (code == 404) {
-                throw IllegalStateException("Repository '$repoSlug' was not found on GitHub.")
+                throw IllegalStateException("Release feed was not found on GitHub.")
             }
             if (code !in 200..299) {
                 throw IllegalStateException(formatHttpError("GitHub feed error", code, conn))

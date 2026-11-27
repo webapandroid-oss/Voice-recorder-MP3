@@ -75,7 +75,6 @@ import kotlin.math.roundToInt
 @Composable
 fun UpdateScreen(
     updateState: UpdateUiState,
-    configuredRepo: String,
     onBack: () -> Unit,
     onCheckAgain: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -163,12 +162,11 @@ fun UpdateScreen(
                 when (updateState) {
                     is UpdateUiState.Idle,
                     is UpdateUiState.Checking -> {
-                        CheckingUpdatesCard(configuredRepo = configuredRepo)
+                        CheckingUpdatesCard()
                     }
 
                     is UpdateUiState.UpToDate -> {
                         UpToDateCard(
-                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             latestVersion = updateState.latestVersion,
                             onCheckAgain = onCheckAgain,
@@ -178,7 +176,6 @@ fun UpdateScreen(
 
                     is UpdateUiState.Available -> {
                         ReleaseUpdateContent(
-                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             release = updateState.release,
                             updateState = updateState,
@@ -192,7 +189,6 @@ fun UpdateScreen(
 
                     is UpdateUiState.Downloading -> {
                         ReleaseUpdateContent(
-                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             release = updateState.release,
                             updateState = updateState,
@@ -206,7 +202,6 @@ fun UpdateScreen(
 
                     is UpdateUiState.ReadyToInstall -> {
                         ReleaseUpdateContent(
-                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             release = updateState.release,
                             updateState = updateState,
@@ -220,7 +215,6 @@ fun UpdateScreen(
 
                     is UpdateUiState.Installing -> {
                         ReleaseUpdateContent(
-                            configuredRepo = configuredRepo,
                             currentVersion = updateState.currentVersion,
                             release = updateState.release,
                             updateState = updateState,
@@ -235,7 +229,6 @@ fun UpdateScreen(
                     is UpdateUiState.Error -> {
                         if (updateState.release != null) {
                             ReleaseUpdateContent(
-                                configuredRepo = configuredRepo,
                                 currentVersion = updateState.currentVersion,
                                 release = updateState.release,
                                 updateState = updateState,
@@ -247,7 +240,6 @@ fun UpdateScreen(
                             )
                         } else {
                             UpdateErrorCard(
-                                configuredRepo = configuredRepo,
                                 message = updateState.message,
                                 onCheckAgain = onCheckAgain,
                                 onBack = onBack
@@ -261,7 +253,7 @@ fun UpdateScreen(
 }
 
 @Composable
-private fun CheckingUpdatesCard(configuredRepo: String) {
+private fun CheckingUpdatesCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -277,7 +269,7 @@ private fun CheckingUpdatesCard(configuredRepo: String) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             CircularProgressIndicator(
-                color = CyanAccent,
+                color = MaterialTheme.colorScheme.secondary,
                 modifier = Modifier.size(40.dp)
             )
             Text(
@@ -285,22 +277,12 @@ private fun CheckingUpdatesCard(configuredRepo: String) {
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            if (configuredRepo.isNotBlank()) {
-                Text(
-                    text = configuredRepo,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
         }
     }
 }
 
 @Composable
 private fun UpToDateCard(
-    configuredRepo: String,
     currentVersion: String,
     latestVersion: String?,
     onCheckAgain: () -> Unit,
@@ -351,15 +333,6 @@ private fun UpToDateCard(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                 )
             }
-            if (configuredRepo.isNotBlank()) {
-                Text(
-                    text = configuredRepo,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -388,7 +361,6 @@ private fun UpToDateCard(
 
 @Composable
 private fun UpdateErrorCard(
-    configuredRepo: String,
     message: String,
     onCheckAgain: () -> Unit,
     onBack: () -> Unit
@@ -412,13 +384,6 @@ private fun UpdateErrorCard(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.error
             )
-            if (configuredRepo.isNotBlank()) {
-                Text(
-                    text = configuredRepo,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,
@@ -451,7 +416,6 @@ private fun UpdateErrorCard(
 
 @Composable
 private fun ReleaseUpdateContent(
-    configuredRepo: String,
     currentVersion: String,
     release: GitHubReleaseInfo,
     updateState: UpdateUiState,
@@ -551,17 +515,17 @@ private fun ReleaseUpdateContent(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = null,
-                            tint = CyanAccent,
+                            tint = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.size(16.dp)
                         )
                         Surface(
-                            color = CyanAccent.copy(alpha = 0.18f),
+                            color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.16f),
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text(
                                 text = "v${release.versionName}",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = CyanAccent,
+                                color = MaterialTheme.colorScheme.secondary,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier
                                     .padding(horizontal = 10.dp, vertical = 4.dp)
@@ -569,9 +533,9 @@ private fun ReleaseUpdateContent(
                             )
                         }
                     }
-                    if (configuredRepo.isNotBlank()) {
+                    if (release.apkAssetName.isNotBlank()) {
                         Text(
-                            text = "$configuredRepo • ${release.apkAssetName}",
+                            text = release.apkAssetName,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -673,7 +637,7 @@ private fun ReleaseUpdateContent(
                             Text(
                                 text = pctText,
                                 style = MaterialTheme.typography.labelLarge,
-                                color = CyanAccent,
+                                color = MaterialTheme.colorScheme.secondary,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -681,7 +645,7 @@ private fun ReleaseUpdateContent(
                         if (downloading.progress != null) {
                             LinearProgressIndicator(
                                 progress = { downloading.progress.coerceIn(0f, 1f) },
-                                color = CyanAccent,
+                                color = MaterialTheme.colorScheme.secondary,
                                 trackColor = MaterialTheme.colorScheme.surfaceContainerLowest,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -690,7 +654,7 @@ private fun ReleaseUpdateContent(
                             )
                         } else {
                             LinearProgressIndicator(
-                                color = CyanAccent,
+                                color = MaterialTheme.colorScheme.secondary,
                                 trackColor = MaterialTheme.colorScheme.surfaceContainerLowest,
                                 modifier = Modifier
                                     .fillMaxWidth()

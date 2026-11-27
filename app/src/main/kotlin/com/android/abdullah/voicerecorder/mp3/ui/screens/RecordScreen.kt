@@ -543,7 +543,12 @@ private fun TransportControlsDeck(
                     RecorderStatus.PAUSED -> MaterialTheme.colorScheme.primary
                     RecorderStatus.FINALIZING -> MaterialTheme.colorScheme.surfaceContainer
                 },
-                contentColor = MaterialTheme.colorScheme.onPrimary,
+                contentColor = when (status) {
+                    RecorderStatus.IDLE,
+                    RecorderStatus.PAUSED -> MaterialTheme.colorScheme.onPrimary
+                    RecorderStatus.RECORDING,
+                    RecorderStatus.FINALIZING -> MaterialTheme.colorScheme.onSurface
+                },
                 elevation = FloatingActionButtonDefaults.elevation(
                     defaultElevation = 4.dp
                 ),

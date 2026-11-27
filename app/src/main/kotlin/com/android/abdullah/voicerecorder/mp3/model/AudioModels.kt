@@ -58,6 +58,11 @@ enum class StorageLocation {
     SD_CARD
 }
 
+enum class AppThemeMode(val label: String) {
+    LIGHT("Light Theme"),
+    DARK("Dark Theme")
+}
+
 data class Mp3Recording(
     val id: String,
     val displayName: String,

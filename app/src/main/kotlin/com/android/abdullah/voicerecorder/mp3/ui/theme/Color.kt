@@ -21,3 +21,21 @@ val CyanAccent = Color(0xFF64D2FF)
 val AlabasterText = Color(0xFFF4F5F7)
 val MutedSlateText = Color(0xFF9AA2B2)
 val DimSlateText = Color(0xFF6B7280)
+
+// Studio Acoustic Light Palette
+val StudioPaper = Color(0xFFF6F7FA)
+val StudioPaperSurface = Color(0xFFFFFFFF)
+val StudioPaperElevated = Color(0xFFEEF1F6)
+val StudioPaperHigh = Color(0xFFE3E7F0)
+val StudioPaperOutline = Color(0xFFC5CCD9)
+val StudioPaperOutlineSubtle = Color(0xFFDCE1EA)
+
+val CoralRecordLight = Color(0xFFE12D24)
+val CoralRecordContainerLight = Color(0xFFFFE4E2)
+val CoralOnContainerLight = Color(0xFF8A1812)
+val CyanAccentLight = Color(0xFF0284C7)
+val AmberMeterLight = Color(0xFFD97706)
+
+val InkText = Color(0xFF11141A)
+val SlateSecondaryText = Color(0xFF566074)
+

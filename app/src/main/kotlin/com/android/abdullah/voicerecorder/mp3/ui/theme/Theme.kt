@@ -5,6 +5,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalView
@@ -38,6 +39,33 @@ private val StudioDarkColorScheme = darkColorScheme(
     onError = AlabasterText
 )
 
+private val StudioLightColorScheme = lightColorScheme(
+    primary = CoralRecordLight,
+    onPrimary = StudioPaperSurface,
+    primaryContainer = CoralRecordContainerLight,
+    onPrimaryContainer = CoralOnContainerLight,
+    secondary = CyanAccentLight,
+    onSecondary = StudioPaperSurface,
+    secondaryContainer = StudioPaperHigh,
+    onSecondaryContainer = InkText,
+    tertiary = AmberMeterLight,
+    onTertiary = StudioPaperSurface,
+    background = StudioPaper,
+    onBackground = InkText,
+    surface = StudioPaperSurface,
+    onSurface = InkText,
+    surfaceVariant = StudioPaperElevated,
+    onSurfaceVariant = SlateSecondaryText,
+    surfaceContainerLowest = StudioPaperSurface,
+    surfaceContainerLow = StudioPaperSurface,
+    surfaceContainer = StudioPaperElevated,
+    surfaceContainerHigh = StudioPaperHigh,
+    outline = StudioPaperOutline,
+    outlineVariant = StudioPaperOutlineSubtle,
+    error = CoralRecordLight,
+    onError = StudioPaperSurface
+)
+
 val StudioShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
@@ -48,6 +76,7 @@ val StudioShapes = Shapes(
 
 @Composable
 fun VoiceRecorderTheme(
+    darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val view = LocalView.current
@@ -55,13 +84,13 @@ fun VoiceRecorderTheme(
         SideEffect {
             val window = (view.context as? Activity)?.window ?: return@SideEffect
             val insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.isAppearanceLightStatusBars = false
-            insetsController.isAppearanceLightNavigationBars = false
+            insetsController.isAppearanceLightStatusBars = !darkTheme
+            insetsController.isAppearanceLightNavigationBars = !darkTheme
         }
     }
 
     MaterialTheme(
-        colorScheme = StudioDarkColorScheme,
+        colorScheme = if (darkTheme) StudioDarkColorScheme else StudioLightColorScheme,
         typography = AppTypography,
         shapes = StudioShapes,
         content = content

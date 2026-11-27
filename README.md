@@ -1,17 +1,43 @@
-# Voice-recorder-MP3
+<p align="center">
+  <img src="app/src/main/res/drawable/ic_launcher_art_1795425771908.jpg" alt="Voice Recorder MP3 Icon" width="120" style="border-radius: 24px;" />
+</p>
+
+<h1 align="center">Voice-recorder-MP3</h1>
 
 <p align="center">
   <strong>A fast, modern, native-MP3 Android voice recorder built with Kotlin, Jetpack Compose, and FFmpeg + LAME.</strong>
 </p>
 
 <p align="center">
+  <a href="https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/latest">
+    <img src="https://img.shields.io/github/v/release/webapandroid-oss/Voice-recorder-MP3?style=for-the-badge&logo=github&label=Latest%20APK&color=FF3B30" alt="Latest Release" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge&logo=gnu" alt="License: GPL v3" />
+  </a>
   <img src="https://img.shields.io/badge/Platform-Android%207.0%2B%20(API%2024%E2%80%9336)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 7.0+" />
   <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin & Jetpack Compose" />
   <img src="https://img.shields.io/badge/Audio%20Engine-FFmpeg%20%2B%20libmp3lame-007808?style=for-the-badge&logo=ffmpeg&logoColor=white" alt="FFmpeg + LAME" />
   <img src="https://img.shields.io/badge/Design-Material%203-6750A4?style=for-the-badge&logo=materialdesign&logoColor=white" alt="Material Design 3" />
 </p>
 
+<p align="center">
+  <a href="https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/latest"><strong>📥 Download Latest APK</strong></a> •
+  <a href="#-features"><strong>✨ Features</strong></a> •
+  <a href="#-build-from-source"><strong>🛠️ Build from Source</strong></a> •
+  <a href="#-license"><strong>⚖️ License</strong></a>
+</p>
+
 **Voice-recorder-MP3** captures microphone audio and encodes it directly to real `.mp3` files in real time—no bulky WAV intermediates, no post-recording waiting, and no extra clutter. Designed with a clean studio-inspired Material Design 3 interface, it gives you live waveform metering, configurable bitrates up to 320 kbps, background recording controls, and an inline MP3 player all in one lightweight app.
+
+---
+
+## 📥 Download
+
+Download the latest signed release APK directly from **[GitHub Releases](https://github.com/webapandroid-oss/Voice-recorder-MP3/releases/latest)**.
+
+- Supports `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86` architectures (with 16 KB page-size support).
+- Built-in in-app release updater verifies SHA-256 checksums and signing certificates before installation.
 
 ---
 
@@ -106,3 +132,34 @@ Please keep the following caveats and potential issues in mind before using the 
   - Installing updates directly from inside the app requires granting **"Install unknown apps"** permission for Voice Recorder.
   - If you switch between a locally built **debug** APK and a signed **release** APK, Android will fail to install over the existing app due to a signing certificate mismatch—export your recordings first, uninstall the old build, then install the new APK.
 - **Storage Space & Data Usage:** High-bitrate recordings (especially `320 kbps` at ~2.4 MB/min) require adequate free storage; running out of space mid-recording can cause saving to fail. Automatic background update checks also require internet access.
+
+---
+
+## 🛠️ Build from Source
+
+### Prerequisites
+- **JDK 21** and **Android SDK** (API 36 / Build-Tools 36.0.0)
+- Prebuilt `libffmpeg.so` binaries are already included in `app/src/main/jniLibs/`
+
+### Build Commands
+```bash
+git clone https://github.com/webapandroid-oss/Voice-recorder-MP3.git
+cd Voice-recorder-MP3
+gradle assembleDebug
+```
+
+To rebuild the native MP3-only `libffmpeg.so` libraries (`FFmpeg 6.1.2` + `LAME 3.100`) from source using the Android NDK:
+```bash
+bash app/src/main/cpp/build_libffmpeg.sh
+```
+
+---
+
+## ⚖️ License
+
+Copyright © 2026 **webapandroid-oss**
+
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)** — see the [LICENSE](LICENSE) file for details.
+
+- Anyone using, modifying, or redistributing this project must preserve the original copyright notice and license, document changes, and release derivative works under **GPL-3.0**.
+- The bundled native MP3 audio engine (`libffmpeg.so`) compiles **FFmpeg 6.1.2** and **LAME 3.100** under LGPL-compatible build flags (`app/src/main/cpp/build_libffmpeg.sh`).

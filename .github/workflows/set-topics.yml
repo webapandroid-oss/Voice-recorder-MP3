@@ -1,0 +1,40 @@
+name: Set Repository Topics (Temporary)
+
+on:
+  workflow_dispatch:
+    inputs:
+      topics:
+        description: "Comma-separated GitHub topics to add"
+        type: string
+        required: true
+        default: "android,kotlin,jetpack-compose,material3,material-design-3,voice-recorder,audio-recorder,mp3-recorder,mp3,ffmpeg,lame,libmp3lame,audio-recording,android-app,open-source,foss"
+
+permissions:
+  contents: read
+
+jobs:
+  set-topics:
+    name: Add GitHub Repository Topics
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Add topics to repository
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          TOPICS_INPUT: ${{ inputs.topics }}
+          TARGET_REPO: ${{ github.repository }}
+        run: |
+          CLEAN_TOPICS="$(printf '%s' "$TOPICS_INPUT" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+          echo "Target repository: $TARGET_REPO"
+          echo "Adding topics: $CLEAN_TOPICS"
+
+          if ! OUTPUT="$(gh repo edit "$TARGET_REPO" --add-topic "$CLEAN_TOPICS" 2>&1)"; then
+            echo "$OUTPUT" >&2
+            if echo "$OUTPUT" | grep -qiE "403|Resource not accessible by integration|Administration"; then
+              echo "::error::GitHub's default GITHUB_TOKEN does not have 'Administration: write' permission required to edit repository topics. Create a temporary Personal Access Token (classic 'repo' scope, or fine-grained with Administration: Read and write), save it as repository secret 'GH_PAT' in Settings -> Secrets and variables -> Actions, and re-run this workflow."
+            fi
+            exit 1
+          fi
+
+          echo "$OUTPUT"
+          echo "Successfully updated repository topics!"

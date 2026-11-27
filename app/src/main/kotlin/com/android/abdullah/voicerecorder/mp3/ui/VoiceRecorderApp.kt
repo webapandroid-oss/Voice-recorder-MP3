@@ -86,7 +86,7 @@ import com.android.abdullah.voicerecorder.mp3.model.StorageLocation
 import com.android.abdullah.voicerecorder.mp3.model.UpdateUiState
 import com.android.abdullah.voicerecorder.mp3.ui.components.QualitySettingsSheet
 import com.android.abdullah.voicerecorder.mp3.ui.screens.LibraryScreen
-import com.android.abdullah.voicerecorder.mp3.ui.screens.RecordScreen
+import com.android.abdullah.voicerecorder.mp3.ui.screens.RecordRoute
 import com.android.abdullah.voicerecorder.mp3.ui.screens.SettingsScreen
 import com.android.abdullah.voicerecorder.mp3.ui.screens.UpdateScreen
 import com.android.abdullah.voicerecorder.mp3.ui.theme.EmeraldClean
@@ -100,7 +100,7 @@ fun VoiceRecorderApp(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val liveRecordingState by viewModel.liveRecordingState.collectAsStateWithLifecycle()
+    val recorderStatus by viewModel.recorderStatus.collectAsStateWithLifecycle()
     val qualityConfig by viewModel.qualityConfig.collectAsStateWithLifecycle()
     val recordings by viewModel.filteredRecordings.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -480,8 +480,8 @@ fun VoiceRecorderApp(
                                     .weight(1f)
                                     .fillMaxHeight()
                             ) {
-                                RecordScreen(
-                                    liveState = liveRecordingState,
+                                RecordRoute(
+                                    liveStateFlow = viewModel.liveRecordingState,
                                     draftTitle = draftTitle,
                                     storageLocation = storageLocation,
                                     onDraftTitleChange = viewModel::updateDraftTitle,
@@ -532,8 +532,8 @@ fun VoiceRecorderApp(
                     } else {
                         when (currentDestination) {
                             MainDestination.RECORD -> {
-                                RecordScreen(
-                                    liveState = liveRecordingState,
+                                RecordRoute(
+                                    liveStateFlow = viewModel.liveRecordingState,
                                     draftTitle = draftTitle,
                                     storageLocation = storageLocation,
                                     onDraftTitleChange = viewModel::updateDraftTitle,
@@ -582,7 +582,7 @@ fun VoiceRecorderApp(
         if (showQualitySheet) {
             QualitySettingsSheet(
                 config = qualityConfig,
-                isRecordingActive = liveRecordingState.status != RecorderStatus.IDLE,
+                isRecordingActive = recorderStatus != RecorderStatus.IDLE,
                 onBitrateSelected = viewModel::updateBitrate,
                 onSampleRateSelected = viewModel::updateSampleRate,
                 onChannelModeSelected = viewModel::updateChannelMode,

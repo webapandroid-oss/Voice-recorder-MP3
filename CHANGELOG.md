@@ -2,6 +2,14 @@
 
 All notable changes to Voice Recorder will be documented in this file.
 
+## [1.0.6.1] - 2026-11-27 (Version Code 8)
+
+### Changed
+- **Record Screen & Active Recording Controls Redesign:** Upgraded the active recording transport layout with an elevated 3-button Studio Transport Dock (`Discard`, `Pause`/`Resume`, and high-contrast `Save`) featuring larger touch targets, clear action labels, tactile haptic feedback, and a live status badge (`REC` / `PAUSED` / `MP3`).
+- **Faster Startup & Smoother UI Performance:** Moved recording file target creation off the main thread onto `Dispatchers.IO`, eliminated top-level Compose recompositions during active recording ticks, optimized waveform Canvas rendering to zero per-frame list allocations, and added SQL filtering to MediaStore queries.
+- **Durable & Responsive UX:** Added tabular timecode numerals (`tnum`) to prevent timer jitter, quick-clear title button, adaptive waveform height on compact screens, and kept all `1.0.6` features intact.
+- **Bumped App Version:** Updated `versionName` to `1.0.6.1` and `versionCode` to `8`.
+
 ## [1.0.5] - 2026-11-26 (Version Code 6)
 
 ### Changed

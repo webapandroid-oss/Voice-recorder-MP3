@@ -49,6 +49,8 @@ sealed interface DirectRecordingTarget {
     fun discardAndDelete()
 }
 
+private const val OUTPUT_BUFFER_BYTES = 32 * 1024
+
 private class MediaStoreDirectTarget(
     private val context: Context,
     private val uri: Uri,
@@ -64,7 +66,7 @@ private class MediaStoreDirectTarget(
             ?: resolver.openFileDescriptor(uri, "rw")
             ?: throw IllegalStateException("Unable to open output descriptor for $fileName")
         pfd = descriptor
-        return BufferedOutputStream(FileOutputStream(descriptor.fileDescriptor))
+        return BufferedOutputStream(FileOutputStream(descriptor.fileDescriptor), OUTPUT_BUFFER_BYTES)
     }
 
     override fun closeStream(stream: BufferedOutputStream?) {
@@ -122,7 +124,7 @@ private class FileDirectTarget(
 
     override fun openOutputStream(): BufferedOutputStream {
         file.parentFile?.let { if (!it.exists()) it.mkdirs() }
-        return BufferedOutputStream(FileOutputStream(file))
+        return BufferedOutputStream(FileOutputStream(file), OUTPUT_BUFFER_BYTES)
     }
 
     override fun closeStream(stream: BufferedOutputStream?) {
@@ -173,7 +175,7 @@ private class SafDirectTarget(
             ?: resolver.openFileDescriptor(docUri, "rw")
             ?: throw IllegalStateException("Unable to open SD card output descriptor for $fileName")
         pfd = descriptor
-        return BufferedOutputStream(FileOutputStream(descriptor.fileDescriptor))
+        return BufferedOutputStream(FileOutputStream(descriptor.fileDescriptor), OUTPUT_BUFFER_BYTES)
     }
 
     override fun closeStream(stream: BufferedOutputStream?) {
@@ -480,8 +482,10 @@ class RecordingsRepository(private val context: Context) {
             MediaStore.Audio.Media.DISPLAY_NAME,
             MediaStore.Audio.Media.RELATIVE_PATH
         )
+        val selection = "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?"
+        val selectionArgs = arrayOf("%$VOICE_RECORDER_FOLDER%")
         runCatching {
-            context.contentResolver.query(collection, projection, null, null, null)?.use { cursor ->
+            context.contentResolver.query(collection, projection, selection, selectionArgs, null)?.use { cursor ->
                 val nameCol = cursor.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
                 val pathCol = cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
                 while (cursor.moveToNext()) {
@@ -786,9 +790,11 @@ class RecordingsRepository(private val context: Context) {
             MediaStore.Audio.Media.IS_PENDING,
             MediaStore.Audio.Media.DATA
         )
+        val selection = "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ? AND ${MediaStore.Audio.Media.IS_PENDING} = 0"
+        val selectionArgs = arrayOf("%$VOICE_RECORDER_FOLDER%")
         val sortOrder = "${MediaStore.Audio.Media.DATE_MODIFIED} DESC"
         runCatching {
-            resolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+            resolver.query(collection, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                 val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
                 val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)

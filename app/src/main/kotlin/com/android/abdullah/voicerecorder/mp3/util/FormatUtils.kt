@@ -9,14 +9,19 @@ object FormatUtils {
     fun formatTimerWithTenths(durationMs: Long): String {
         val safeMs = durationMs.coerceAtLeast(0L)
         val totalSeconds = safeMs / 1000L
-        val tenths = (safeMs % 1000L) / 100L
+        val tenths = ((safeMs % 1000L) / 100L).toInt()
         val hours = totalSeconds / 3600L
-        val minutes = (totalSeconds % 3600L) / 60L
-        val seconds = totalSeconds % 60L
-        return if (hours > 0) {
-            String.format(Locale.US, "%02d:%02d:%02d.%d", hours, minutes, seconds, tenths)
-        } else {
-            String.format(Locale.US, "%02d:%02d.%d", minutes, seconds, tenths)
+        val minutes = ((totalSeconds % 3600L) / 60L).toInt()
+        val seconds = (totalSeconds % 60L).toInt()
+        return buildString(11) {
+            if (hours > 0L) {
+                if (hours < 10L) append('0')
+                append(hours).append(':')
+            }
+            if (minutes < 10) append('0')
+            append(minutes).append(':')
+            if (seconds < 10) append('0')
+            append(seconds).append('.').append(tenths)
         }
     }
 
@@ -24,12 +29,16 @@ object FormatUtils {
         val safeMs = durationMs.coerceAtLeast(0L)
         val totalSeconds = safeMs / 1000L
         val hours = totalSeconds / 3600L
-        val minutes = (totalSeconds % 3600L) / 60L
-        val seconds = totalSeconds % 60L
-        return if (hours > 0) {
-            String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format(Locale.US, "%02d:%02d", minutes, seconds)
+        val minutes = ((totalSeconds % 3600L) / 60L).toInt()
+        val seconds = (totalSeconds % 60L).toInt()
+        return buildString(8) {
+            if (hours > 0L) {
+                append(hours).append(':')
+            }
+            if (minutes < 10) append('0')
+            append(minutes).append(':')
+            if (seconds < 10) append('0')
+            append(seconds)
         }
     }
 

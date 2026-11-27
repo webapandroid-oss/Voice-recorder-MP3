@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -16,19 +17,27 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -42,16 +51,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.LargeFloatingActionButton
-import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,26 +70,64 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.abdullah.voicerecorder.mp3.R
 import com.android.abdullah.voicerecorder.mp3.model.RecorderStatus
 import com.android.abdullah.voicerecorder.mp3.model.StorageLocation
 import com.android.abdullah.voicerecorder.mp3.service.LiveRecordingState
 import com.android.abdullah.voicerecorder.mp3.ui.components.StudioWaveformCard
-import com.android.abdullah.voicerecorder.mp3.ui.theme.AmberMeter
 import com.android.abdullah.voicerecorder.mp3.ui.theme.CoralRecord
 import com.android.abdullah.voicerecorder.mp3.ui.theme.CyanAccent
+import com.android.abdullah.voicerecorder.mp3.ui.theme.EmeraldClean
+import com.android.abdullah.voicerecorder.mp3.ui.theme.StudioObsidian
 import com.android.abdullah.voicerecorder.mp3.util.FormatUtils
+import kotlinx.coroutines.flow.StateFlow
+
+@Composable
+fun RecordRoute(
+    liveStateFlow: StateFlow<LiveRecordingState>,
+    draftTitle: String,
+    storageLocation: StorageLocation = StorageLocation.INTERNAL,
+    onDraftTitleChange: (String) -> Unit,
+    onStartRecording: () -> Unit,
+    onPauseRecording: () -> Unit,
+    onResumeRecording: () -> Unit,
+    onStopAndSave: () -> Unit,
+    onDiscard: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val liveState by liveStateFlow.collectAsStateWithLifecycle()
+    RecordScreen(
+        liveState = liveState,
+        draftTitle = draftTitle,
+        storageLocation = storageLocation,
+        onDraftTitleChange = onDraftTitleChange,
+        onStartRecording = onStartRecording,
+        onPauseRecording = onPauseRecording,
+        onResumeRecording = onResumeRecording,
+        onStopAndSave = onStopAndSave,
+        onDiscard = onDiscard,
+        modifier = modifier
+    )
+}
 
 @Composable
 fun RecordScreen(
@@ -99,6 +144,8 @@ fun RecordScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val focusManager = LocalFocusManager.current
+    val haptic = LocalHapticFeedback.current
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -181,6 +228,7 @@ fun RecordScreen(
     }
 
     fun requestMicAndStart() {
+        focusManager.clearFocus()
         val micGranted = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.RECORD_AUDIO
@@ -215,127 +263,148 @@ fun RecordScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .widthIn(max = 560.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(top = 12.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .widthIn(max = 560.dp),
+            contentAlignment = Alignment.TopCenter
         ) {
-            // Minimal recording title field when idle, or active file size row when recording
-            if (liveState.status == RecorderStatus.IDLE) {
-                OutlinedTextField(
-                    value = draftTitle,
-                    onValueChange = onDraftTitleChange,
-                    singleLine = true,
-                    placeholder = {
-                        Text(
-                            text = "Title",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Edit,
-                            contentDescription = "Title",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    shape = MaterialTheme.shapes.medium,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("recording_title_input")
-                )
-            } else {
-                ActiveRecordingStatusRow(
-                    status = liveState.status,
-                    fileName = liveState.activeFileName,
-                    encodedBytes = liveState.encodedBytes
-                )
-            }
+            val isCompactHeight = maxHeight < 420.dp
+            val verticalGap = if (isCompactHeight) 12.dp else 18.dp
+            val waveformHeight = if (isCompactHeight) 104.dp else 144.dp
 
-            // Minimal Precision Timecode Readout (no extra descriptive lines)
-            Text(
-                text = FormatUtils.formatTimerWithTenths(liveState.elapsedMs),
-                style = MaterialTheme.typography.displayLarge,
-                color = MaterialTheme.colorScheme.onBackground,
+            Column(
                 modifier = Modifier
-                    .padding(vertical = 4.dp)
-                    .testTag("recording_timer_text")
-            )
-
-            // Clean Material Waveform
-            StudioWaveformCard(
-                amplitudes = liveState.amplitudes,
-                currentLevelDb = liveState.currentLevelDb,
-                status = liveState.status
-            )
-
-            // Microphone permission notice if denied
-            if (!hasMicPermission && micPermissionDeniedOnce && liveState.status == RecorderStatus.IDLE) {
-                Card(
-                    shape = MaterialTheme.shapes.large,
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Mic,
-                                contentDescription = stringResource(R.string.permission_mic_title),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 8.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(verticalGap),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (liveState.status == RecorderStatus.IDLE) {
+                    OutlinedTextField(
+                        value = draftTitle,
+                        onValueChange = onDraftTitleChange,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = { focusManager.clearFocus() }
+                        ),
+                        placeholder = {
                             Text(
-                                text = stringResource(R.string.permission_mic_title),
-                                style = MaterialTheme.typography.titleMedium
+                                text = "Title",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                        }
-                        Text(
-                            text = stringResource(R.string.permission_settings_hint),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = { requestMicAndStart() },
-                                modifier = Modifier.testTag("retry_mic_permission_button")
-                            ) {
-                                Text(stringResource(R.string.permission_mic_button))
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    val intent = Intent(
-                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                        Uri.fromParts("package", context.packageName, null)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Edit,
+                                contentDescription = "Title",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        trailingIcon = {
+                            if (draftTitle.isNotEmpty()) {
+                                IconButton(
+                                    onClick = { onDraftTitleChange("") },
+                                    modifier = Modifier.testTag("clear_title_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Close,
+                                        contentDescription = stringResource(R.string.action_clear),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    context.startActivity(intent)
-                                },
-                                modifier = Modifier.testTag("open_settings_button")
+                                }
+                            }
+                        },
+                        shape = MaterialTheme.shapes.medium,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("recording_title_input")
+                    )
+                } else {
+                    ActiveRecordingStatusRow(
+                        status = liveState.status,
+                        fileName = liveState.activeFileName,
+                        encodedBytes = liveState.encodedBytes
+                    )
+                }
+
+                TimerReadout(
+                    elapsedMs = liveState.elapsedMs,
+                    status = liveState.status
+                )
+
+                StudioWaveformCard(
+                    amplitudes = liveState.amplitudes,
+                    currentLevelDb = liveState.currentLevelDb,
+                    status = liveState.status,
+                    waveformHeight = waveformHeight
+                )
+
+                if (!hasMicPermission && micPermissionDeniedOnce && liveState.status == RecorderStatus.IDLE) {
+                    Card(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text(stringResource(R.string.open_app_settings))
+                                Icon(
+                                    imageVector = Icons.Filled.Mic,
+                                    contentDescription = stringResource(R.string.permission_mic_title),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = stringResource(R.string.permission_mic_title),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+                            Text(
+                                text = stringResource(R.string.permission_settings_hint),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(
+                                    onClick = { requestMicAndStart() },
+                                    modifier = Modifier.testTag("retry_mic_permission_button")
+                                ) {
+                                    Text(stringResource(R.string.permission_mic_button))
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        val intent = Intent(
+                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.fromParts("package", context.packageName, null)
+                                        )
+                                        context.startActivity(intent)
+                                    },
+                                    modifier = Modifier.testTag("open_settings_button")
+                                ) {
+                                    Text(stringResource(R.string.open_app_settings))
+                                }
                             }
                         }
                     }
@@ -343,21 +412,34 @@ fun RecordScreen(
             }
         }
 
-        // Pinned Bottom-Center Material Transport Controls
+        // Pinned Bottom Studio Transport Controls
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 560.dp)
-                .padding(top = 8.dp, bottom = 16.dp),
+                .padding(top = 6.dp, bottom = 14.dp),
             contentAlignment = Alignment.Center
         ) {
             TransportControlsDeck(
                 status = liveState.status,
-                onStart = { requestMicAndStart() },
-                onPause = onPauseRecording,
-                onResume = onResumeRecording,
-                onStopAndSave = onStopAndSave,
+                onStart = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    requestMicAndStart()
+                },
+                onPause = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onPauseRecording()
+                },
+                onResume = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onResumeRecording()
+                },
+                onStopAndSave = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onStopAndSave()
+                },
                 onRequestDiscard = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     if (liveState.elapsedMs >= 3000L) {
                         showDiscardConfirm = true
                     } else {
@@ -373,7 +455,17 @@ fun RecordScreen(
             onDismissRequest = { showDiscardConfirm = false },
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
             title = {
-                Text("Discard recording?", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    text = stringResource(R.string.discard_dialog_title),
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(R.string.discard_dialog_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             },
             confirmButton = {
                 Button(
@@ -391,11 +483,37 @@ fun RecordScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDiscardConfirm = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
         )
     }
+}
+
+@Composable
+private fun TimerReadout(
+    elapsedMs: Long,
+    status: RecorderStatus
+) {
+    val timerColor = when (status) {
+        RecorderStatus.PAUSED -> MaterialTheme.colorScheme.tertiary
+        RecorderStatus.FINALIZING -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.onBackground
+    }
+    val baseStyle = MaterialTheme.typography.displayLarge
+    val tabularStyle = remember(baseStyle) {
+        baseStyle.copy(fontFeatureSettings = "tnum")
+    }
+
+    Text(
+        text = FormatUtils.formatTimerWithTenths(elapsedMs),
+        style = tabularStyle,
+        color = timerColor,
+        maxLines = 1,
+        modifier = Modifier
+            .padding(vertical = 2.dp)
+            .testTag("recording_timer_text")
+    )
 }
 
 @Composable
@@ -404,48 +522,85 @@ private fun ActiveRecordingStatusRow(
     fileName: String?,
     encodedBytes: Long
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "recDot")
-    val dotAlpha by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(650),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "recDotAlpha"
-    )
+    val dotAlpha = if (status == RecorderStatus.RECORDING) {
+        val infiniteTransition = rememberInfiniteTransition(label = "recDot")
+        val animated by infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.25f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(600),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "recDotAlpha"
+        )
+        animated
+    } else {
+        1f
+    }
 
-    val dotColor = when (status) {
-        RecorderStatus.RECORDING -> CoralRecord.copy(alpha = dotAlpha)
-        RecorderStatus.PAUSED -> AmberMeter
-        RecorderStatus.FINALIZING -> CyanAccent
+    val statusTint = when (status) {
+        RecorderStatus.RECORDING -> CoralRecord
+        RecorderStatus.PAUSED -> MaterialTheme.colorScheme.tertiary
+        RecorderStatus.FINALIZING -> MaterialTheme.colorScheme.secondary
         RecorderStatus.IDLE -> MaterialTheme.colorScheme.outline
     }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    val badgeLabel = when (status) {
+        RecorderStatus.RECORDING -> "REC"
+        RecorderStatus.PAUSED -> "PAUSED"
+        RecorderStatus.FINALIZING -> "MP3"
+        RecorderStatus.IDLE -> ""
+    }
+
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, statusTint.copy(alpha = 0.28f)),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(10.dp)
-                .background(dotColor, CircleShape)
-        )
-        Text(
-            text = fileName.orEmpty(),
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = FormatUtils.formatFileSize(encodedBytes),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = statusTint.copy(alpha = 0.14f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(statusTint.copy(alpha = dotAlpha), CircleShape)
+                    )
+                    Text(
+                        text = badgeLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = statusTint
+                    )
+                }
+            }
+            Text(
+                text = fileName.orEmpty(),
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = FormatUtils.formatFileSize(encodedBytes),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
     }
 }
 
@@ -458,142 +613,320 @@ private fun TransportControlsDeck(
     onStopAndSave: () -> Unit,
     onRequestDiscard: () -> Unit
 ) {
-    val pulseTransition = rememberInfiniteTransition(label = "recordHalo")
-    val haloScale by pulseTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "haloScale"
-    )
+    val isIdle = status == RecorderStatus.IDLE
 
-    val isActive = status == RecorderStatus.RECORDING || status == RecorderStatus.PAUSED
+    AnimatedContent(
+        targetState = isIdle,
+        transitionSpec = {
+            (fadeIn(tween(180)) + scaleIn(initialScale = 0.96f, animationSpec = tween(180)))
+                .togetherWith(fadeOut(tween(130)))
+        },
+        label = "transportDeckTransition"
+    ) { idleMode ->
+        if (idleMode) {
+            IdleRecordHeroButton(onStart = onStart)
+        } else {
+            ActiveRecordingTransportDock(
+                status = status,
+                onPause = onPause,
+                onResume = onResume,
+                onStopAndSave = onStopAndSave,
+                onRequestDiscard = onRequestDiscard
+            )
+        }
+    }
+}
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+@Composable
+private fun IdleRecordHeroButton(
+    onStart: () -> Unit
+) {
+    val startDesc = stringResource(R.string.action_record)
+    Surface(
+        onClick = onStart,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+        shadowElevation = 6.dp,
+        modifier = Modifier
+            .fillMaxWidth(0.86f)
+            .widthIn(min = 232.dp, max = 320.dp)
+            .height(68.dp)
+            .semantics {
+                contentDescription = startDesc
+                role = Role.Button
+            }
+            .testTag("primary_record_button")
     ) {
-        // Left zone: Material FilledTonalIconButton for Discard
-        Box(
-            modifier = Modifier.weight(1f),
-            contentAlignment = Alignment.CenterEnd
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
-            androidx.compose.animation.AnimatedVisibility(
-                visible = isActive,
-                enter = fadeIn() + scaleIn(initialScale = 0.8f),
-                exit = fadeOut() + scaleOut(targetScale = 0.8f)
-            ) {
-                FilledTonalIconButton(
-                    onClick = onRequestDiscard,
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        contentColor = MaterialTheme.colorScheme.onSurface
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(
+                        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.18f),
+                        CircleShape
                     ),
-                    modifier = Modifier
-                        .padding(end = 20.dp)
-                        .size(56.dp)
-                        .testTag("discard_recording_button")
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Mic,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = startDesc,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActiveRecordingTransportDock(
+    status: RecorderStatus,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onStopAndSave: () -> Unit,
+    onRequestDiscard: () -> Unit
+) {
+    val isBusyFinalizing = status == RecorderStatus.FINALIZING
+    val haloScale = if (status == RecorderStatus.RECORDING) {
+        val pulseTransition = rememberInfiniteTransition(label = "recordHalo")
+        val animated by pulseTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.12f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(850),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "haloScale"
+        )
+        animated
+    } else {
+        1f
+    }
+
+    val primaryDesc = when (status) {
+        RecorderStatus.IDLE -> stringResource(R.string.action_record)
+        RecorderStatus.RECORDING -> stringResource(R.string.action_pause)
+        RecorderStatus.PAUSED -> stringResource(R.string.action_resume)
+        RecorderStatus.FINALIZING -> stringResource(R.string.status_encoding)
+    }
+    val discardDesc = stringResource(R.string.action_discard)
+    val saveDesc = stringResource(R.string.action_stop_save)
+
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        tonalElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Left: Ergonomic Discard button with unmistakable label
+            Surface(
+                onClick = onRequestDiscard,
+                enabled = !isBusyFinalizing,
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = if (isBusyFinalizing) {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(64.dp)
+                    .semantics {
+                        contentDescription = discardDesc
+                        role = Role.Button
+                    }
+                    .testTag("discard_recording_button")
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
-                        contentDescription = stringResource(R.string.action_discard)
+                        contentDescription = null,
+                        tint = if (isBusyFinalizing) {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = discardDesc,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
-        }
 
-        // Center zone: Material LargeFloatingActionButton for Record / Pause / Resume
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(104.dp)
-        ) {
-            if (status == RecorderStatus.RECORDING) {
-                Box(
-                    modifier = Modifier
-                        .size(92.dp)
-                        .scale(haloScale)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f), CircleShape)
-                )
-            }
+            // Center: Focal Pause / Resume circular button with acoustic ring
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(88.dp)
+            ) {
+                if (status == RecorderStatus.RECORDING) {
+                    Box(
+                        modifier = Modifier
+                            .size(84.dp)
+                            .scale(haloScale)
+                            .background(
+                                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
+                                CircleShape
+                            )
+                    )
+                }
 
-            val buttonDescription = when (status) {
-                RecorderStatus.IDLE -> stringResource(R.string.action_record)
-                RecorderStatus.RECORDING -> stringResource(R.string.action_pause)
-                RecorderStatus.PAUSED -> stringResource(R.string.action_resume)
-                RecorderStatus.FINALIZING -> stringResource(R.string.status_encoding)
-            }
-
-            LargeFloatingActionButton(
-                onClick = {
-                    if (status != RecorderStatus.FINALIZING) {
-                        when (status) {
-                            RecorderStatus.IDLE -> onStart()
-                            RecorderStatus.RECORDING -> onPause()
-                            RecorderStatus.PAUSED -> onResume()
-                            RecorderStatus.FINALIZING -> Unit
-                        }
-                    }
-                },
-                shape = CircleShape,
-                containerColor = when (status) {
-                    RecorderStatus.IDLE -> MaterialTheme.colorScheme.primary
+                val centerContainer = when (status) {
                     RecorderStatus.RECORDING -> MaterialTheme.colorScheme.surfaceContainerHigh
                     RecorderStatus.PAUSED -> MaterialTheme.colorScheme.primary
-                    RecorderStatus.FINALIZING -> MaterialTheme.colorScheme.surfaceContainer
-                },
-                contentColor = when (status) {
-                    RecorderStatus.IDLE,
+                    else -> MaterialTheme.colorScheme.surfaceContainer
+                }
+                val centerContent = when (status) {
                     RecorderStatus.PAUSED -> MaterialTheme.colorScheme.onPrimary
-                    RecorderStatus.RECORDING,
-                    RecorderStatus.FINALIZING -> MaterialTheme.colorScheme.onSurface
-                },
-                elevation = FloatingActionButtonDefaults.elevation(
-                    defaultElevation = 4.dp
-                ),
-                modifier = Modifier
-                    .size(80.dp)
-                    .semantics { contentDescription = buttonDescription }
-                    .testTag("primary_record_button")
-            ) {
-                Icon(
-                    imageVector = when (status) {
-                        RecorderStatus.IDLE -> Icons.Filled.Mic
-                        RecorderStatus.RECORDING -> Icons.Filled.Pause
-                        RecorderStatus.PAUSED -> Icons.Filled.PlayArrow
-                        RecorderStatus.FINALIZING -> Icons.Filled.Mic
-                    },
-                    contentDescription = null,
-                    modifier = Modifier.size(34.dp)
-                )
-            }
-        }
+                    RecorderStatus.FINALIZING -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> MaterialTheme.colorScheme.onSurface
+                }
+                val centerBorder = when (status) {
+                    RecorderStatus.RECORDING -> BorderStroke(2.dp, MaterialTheme.colorScheme.tertiary)
+                    else -> null
+                }
 
-        // Right zone: Material FilledIconButton for Stop & Save
-        Box(
-            modifier = Modifier.weight(1f),
-            contentAlignment = Alignment.CenterStart
-        ) {
-            androidx.compose.animation.AnimatedVisibility(
-                visible = isActive,
-                enter = fadeIn() + scaleIn(initialScale = 0.8f),
-                exit = fadeOut() + scaleOut(targetScale = 0.8f)
-            ) {
-                FilledIconButton(
-                    onClick = onStopAndSave,
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ),
+                Surface(
+                    onClick = {
+                        when (status) {
+                            RecorderStatus.RECORDING -> onPause()
+                            RecorderStatus.PAUSED -> onResume()
+                            else -> Unit
+                        }
+                    },
+                    enabled = !isBusyFinalizing,
+                    shape = CircleShape,
+                    color = centerContainer,
+                    contentColor = centerContent,
+                    border = centerBorder,
+                    shadowElevation = 4.dp,
                     modifier = Modifier
-                        .padding(start = 20.dp)
-                        .size(56.dp)
-                        .testTag("stop_save_button")
+                        .size(78.dp)
+                        .semantics {
+                            contentDescription = primaryDesc
+                            role = Role.Button
+                        }
+                        .testTag("primary_record_button")
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isBusyFinalizing) {
+                            CircularProgressIndicator(
+                                color = CyanAccent,
+                                strokeWidth = 2.5.dp,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        } else {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (status == RecorderStatus.PAUSED) {
+                                        Icons.Filled.PlayArrow
+                                    } else {
+                                        Icons.Filled.Pause
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                                Text(
+                                    text = stringResource(
+                                        if (status == RecorderStatus.PAUSED) {
+                                            R.string.label_resume
+                                        } else {
+                                            R.string.label_pause
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Right: High-contrast Save MP3 button
+            Surface(
+                onClick = onStopAndSave,
+                enabled = !isBusyFinalizing,
+                shape = RoundedCornerShape(20.dp),
+                color = if (isBusyFinalizing) {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                } else {
+                    EmeraldClean
+                },
+                contentColor = if (isBusyFinalizing) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    StudioObsidian
+                },
+                shadowElevation = if (isBusyFinalizing) 0.dp else 3.dp,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(64.dp)
+                    .semantics {
+                        contentDescription = saveDesc
+                        role = Role.Button
+                    }
+                    .testTag("stop_save_button")
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Stop,
-                        contentDescription = stringResource(R.string.action_stop_save)
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = stringResource(
+                            if (isBusyFinalizing) R.string.label_saving else R.string.label_save
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }

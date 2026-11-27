@@ -13,6 +13,13 @@
     <string name="action_resume">Resume recording</string>
     <string name="action_stop_save">Save MP3</string>
     <string name="action_discard">Discard</string>
+    <string name="label_pause">Pause</string>
+    <string name="label_resume">Resume</string>
+    <string name="label_save">Save</string>
+    <string name="label_saving">Saving</string>
+    <string name="discard_dialog_title">Discard recording?</string>
+    <string name="discard_dialog_body">This recording will be permanently deleted.</string>
+    <string name="action_clear">Clear</string>
     <string name="action_settings">Quality Settings</string>
     <string name="action_more_options">More options</string>
     <string name="permission_mic_title">Microphone permission</string>

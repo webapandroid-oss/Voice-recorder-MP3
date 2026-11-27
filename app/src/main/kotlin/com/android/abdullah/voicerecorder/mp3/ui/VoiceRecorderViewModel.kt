@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -83,21 +84,26 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     private val _liveRecordingState = MutableStateFlow(LiveRecordingState())
     val liveRecordingState: StateFlow<LiveRecordingState> = _liveRecordingState.asStateFlow()
 
+    val recorderStatus: StateFlow<RecorderStatus> = _liveRecordingState
+        .map { it.status }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, RecorderStatus.IDLE)
+
     val qualityConfig: StateFlow<RecordingQualityConfig> = settingsRepository.qualityConfigFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), RecordingQualityConfig())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, RecordingQualityConfig())
 
     val sortOrder: StateFlow<SortOrder> = settingsRepository.sortOrderFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SortOrder.NEWEST)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SortOrder.NEWEST)
 
     val storageLocation: StateFlow<StorageLocation> = settingsRepository.storageLocationFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StorageLocation.INTERNAL)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, StorageLocation.INTERNAL)
 
     private val _appTheme = MutableStateFlow(AppThemeMode.DARK)
     val appTheme: StateFlow<AppThemeMode> = _appTheme.asStateFlow()
     private var hasUserChangedTheme = false
 
     val sdCardTreeUri: StateFlow<String?> = settingsRepository.sdCardTreeUriFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _sdCardInfo = MutableStateFlow<SdCardInfo?>(null)
     val sdCardInfo: StateFlow<SdCardInfo?> = _sdCardInfo.asStateFlow()
@@ -227,8 +233,10 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun onAppForegrounded() {
-        refreshSdCardStatus(promptIfNeeded = true)
-        refreshRecordings()
+        if (_liveRecordingState.value.status == RecorderStatus.IDLE) {
+            refreshSdCardStatus(promptIfNeeded = true)
+            refreshRecordings()
+        }
         val elapsed = System.currentTimeMillis() - lastUpdateCheckAtMs
         val state = _updateState.value
         if (elapsed >= FOREGROUND_CHECK_COOLDOWN_MS &&
@@ -424,25 +432,26 @@ class VoiceRecorderViewModel(application: Application) : AndroidViewModel(applic
         val intent = Intent(context, Mp3RecordingService::class.java)
         context.startService(intent)
 
-        viewModelScope.launch {
-            val targetLocation = settingsRepository.storageLocationFlow.first()
-            val treeUri = settingsRepository.sdCardTreeUriFlow.first()
-            val customTitle = _customDraftTitle.value.takeIf { it.isNotBlank() }
+        val targetLocation = storageLocation.value
+        val treeUri = sdCardTreeUri.value
+        val customTitle = _customDraftTitle.value.takeIf { it.isNotBlank() }
+        val config = qualityConfig.value
 
-            val svc = _recordingService.value
-            if (svc != null) {
-                svc.startRecording(
-                    config = qualityConfig.value,
-                    customTitle = customTitle,
-                    storageLocation = targetLocation,
-                    sdCardTreeUri = treeUri
-                )
-            } else {
-                bindRecordingService()
+        val svc = _recordingService.value
+        if (svc != null) {
+            svc.startRecording(
+                config = config,
+                customTitle = customTitle,
+                storageLocation = targetLocation,
+                sdCardTreeUri = treeUri
+            )
+        } else {
+            bindRecordingService()
+            viewModelScope.launch {
                 _recordingService.collect { boundSvc ->
                     if (boundSvc != null && boundSvc.state.value.status == RecorderStatus.IDLE) {
                         boundSvc.startRecording(
-                            config = qualityConfig.value,
+                            config = config,
                             customTitle = customTitle,
                             storageLocation = targetLocation,
                             sdCardTreeUri = treeUri

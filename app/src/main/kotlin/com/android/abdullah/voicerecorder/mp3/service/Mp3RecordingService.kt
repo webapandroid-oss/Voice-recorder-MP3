@@ -122,20 +122,11 @@ class Mp3RecordingService : Service() {
     ) {
         if (_state.value.status != RecorderStatus.IDLE) return
 
+        val captureDate = Date()
         val cleanedCustomTitle = customTitle?.trim()?.takeIf { it.isNotEmpty() }
-        val targetResult = repository.createDirectRecordingTarget(
-            customTitle = cleanedCustomTitle,
-            storageLocation = storageLocation,
-            sdCardTreeUri = sdCardTreeUri,
-            timestampDate = Date()
-        )
-        val target = targetResult.getOrElse { err ->
-            _events.tryEmit(RecordingEvent.Error(err.message ?: "Could not create recording file"))
-            return
-        }
+        val previewFileName = "${repository.buildBaseRecordingName(cleanedCustomTitle, captureDate)}.mp3"
 
-        currentTarget = target
-        val activeName = target.fileName
+        currentTarget = null
         accumulatedElapsedMs = 0L
         lastSegmentStartClockMs = SystemClock.elapsedRealtime()
         isCapturing = true
@@ -148,13 +139,37 @@ class Mp3RecordingService : Service() {
             encodedBytes = 0L,
             currentLevelDb = -60f,
             amplitudes = emptyList(),
-            activeFileName = activeName
+            activeFileName = previewFileName
         )
 
-        startForegroundCompat(buildNotification(paused = false, elapsedMs = 0L, fileName = activeName))
+        startForegroundCompat(buildNotification(paused = false, elapsedMs = 0L, fileName = previewFileName))
         startTimerLoop()
 
         recordingJob = serviceScope.launch(Dispatchers.IO) {
+            val targetResult = repository.createDirectRecordingTarget(
+                customTitle = cleanedCustomTitle,
+                storageLocation = storageLocation,
+                sdCardTreeUri = sdCardTreeUri,
+                timestampDate = captureDate
+            )
+            val target = targetResult.getOrElse { err ->
+                _events.tryEmit(RecordingEvent.Error(err.message ?: "Could not create recording file"))
+                resetToIdleAndStopForeground()
+                return@launch
+            }
+
+            if (!isCapturing) {
+                target.discardAndDelete()
+                _events.tryEmit(RecordingEvent.Discarded)
+                resetToIdleAndStopForeground()
+                return@launch
+            }
+
+            currentTarget = target
+            if (target.fileName != previewFileName) {
+                _state.update { it.copy(activeFileName = target.fileName) }
+            }
+
             runCaptureAndMp3Encode(target, config, discardOnFinish = { shouldDiscard })
         }
     }
@@ -240,6 +255,7 @@ class Mp3RecordingService : Service() {
         var outputStream: BufferedOutputStream? = null
         var totalBytesWritten = 0L
         var lastUiUpdateMs = 0L
+        val amplitudeWindow = ArrayDeque<Float>(64)
 
         try {
             audioRecord = AudioRecord(
@@ -291,15 +307,20 @@ class Mp3RecordingService : Service() {
                         totalBytesWritten += encodedCount
                     }
 
+                    if (amplitudeWindow.size >= 64) {
+                        amplitudeWindow.removeFirst()
+                    }
+                    amplitudeWindow.addLast(visualAmp)
+
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastUiUpdateMs >= 45L) {
                         lastUiUpdateMs = now
+                        val snapshot = amplitudeWindow.toList()
                         _state.update { prev ->
-                            val nextAmps = (prev.amplitudes + visualAmp).takeLast(64)
                             prev.copy(
                                 encodedBytes = totalBytesWritten,
                                 currentLevelDb = db,
-                                amplitudes = nextAmps
+                                amplitudes = snapshot
                             )
                         }
                     }

@@ -48,9 +48,9 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `app version is 1_0_6 with versionCode 7`() {
-        assertEquals(7, BuildConfig.VERSION_CODE)
-        assertEquals("1.0.6", BuildConfig.VERSION_NAME)
+    fun `app version is 1_0_6_1 with versionCode 8`() {
+        assertEquals(8, BuildConfig.VERSION_CODE)
+        assertEquals("1.0.6.1", BuildConfig.VERSION_NAME)
     }
 
     @Test
@@ -99,10 +99,13 @@ class ExampleRobolectricTest {
 
     @Test
     fun `record screen is minimal and renders material transport buttons when recording`() {
+        val state = androidx.compose.runtime.mutableStateOf(
+            LiveRecordingState(status = RecorderStatus.IDLE)
+        )
         composeRule.setContent {
             VoiceRecorderTheme {
                 RecordScreen(
-                    liveState = LiveRecordingState(status = RecorderStatus.RECORDING),
+                    liveState = state.value,
                     draftTitle = "",
                     onDraftTitleChange = {},
                     onStartRecording = {},
@@ -114,10 +117,27 @@ class ExampleRobolectricTest {
             }
         }
         composeRule.onNodeWithTag("primary_record_button").assertIsDisplayed()
+        composeRule.onNodeWithText("Start MP3 recording").assertIsDisplayed()
+
+        state.value = LiveRecordingState(
+            status = RecorderStatus.RECORDING,
+            activeFileName = "Recording_test.mp3",
+            encodedBytes = 2048L
+        )
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("primary_record_button").assertIsDisplayed()
         composeRule.onNodeWithTag("stop_save_button").assertIsDisplayed()
         composeRule.onNodeWithTag("discard_recording_button").assertIsDisplayed()
+        composeRule.onNodeWithText("Pause").assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsDisplayed()
+        composeRule.onNodeWithText("Discard").assertIsDisplayed()
         composeRule.onNodeWithTag("quality_pill_button").assertDoesNotExist()
         composeRule.onNodeWithText("libffmpeg.so", substring = true).assertDoesNotExist()
+
+        state.value = state.value.copy(status = RecorderStatus.PAUSED)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Resume").assertIsDisplayed()
+        composeRule.onNodeWithText("Save").assertIsDisplayed()
     }
 
     @Test
